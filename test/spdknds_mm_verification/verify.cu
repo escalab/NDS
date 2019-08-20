@@ -69,9 +69,7 @@ int cudaMemcpyFromMmap(struct JSONRPCClient *client, double *dst, const double *
 int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
     int i, j, k;
     double *hugepage_addr;
-    double *out_ptr;
     struct JSONRPCClient client;
-    size_t return_size; 
     int rc;
     double *a_sub_d, *b_sub_d;
     half *a_sub_h, *b_sub_h;
@@ -154,9 +152,7 @@ int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
 int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
     int i, j, k;
     double *hugepage_addr;
-    double *out_ptr;
     struct JSONRPCClient client;
-    size_t return_size; 
     int rc;
     double *a_sub_d, *b_sub_d;
     half *a_sub_h, *b_sub_h;
@@ -172,26 +168,21 @@ int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
     cublasHandle_t handle;
 
     // initialization
-    printf("create cublas handle\n");
     cublasCreate(&handle);
-    printf("create cublas handle\n");
     cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
 
-    printf("connect to spdk\n");
     rc = connect_to_spdkrpc_server(&client);
     if (rc) {
         printf("cannot create conntection to SPDK RPC server");
         return rc;
     }
 
-    printf("map to shared page\n");
     hugepage_addr = (double *) mmap_to_tensorstore_hugepage();
     if (hugepage_addr == NULL) {
         return -1;
     }
 
     // cuda malloc
-    printf("allocate memory\n");
     dsize = sub_m * sub_m;
     cudaMalloc((void **) &a_sub_d, sizeof(double) * dsize);
     cudaMalloc((void **) &b_sub_d, sizeof(double) * dsize);
@@ -201,7 +192,6 @@ int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
     cudaMallocPitch((void **) &c_sub_f, &out_pitch, sizeof(float) * sub_m, sub_m);
     ldc = out_pitch / sizeof(float);
 
-    printf("doing GEMM\n");
     // blockGEMM
     for (k = 0; k < m / sub_m; k++) {
         for (i = 0; i < m / sub_m; i++) {
@@ -211,7 +201,6 @@ int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
             fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);  
             d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize); 
             for (j = 0; j < m / sub_m; j++) {
-                printf("i: %d, j: %d, k: %d\n", i, j, k);
                 // memset(hugepage_addr, 0, HUGEPAGE_SZ);
                 gettimeofday(&h_start, NULL);
                 cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k);
@@ -245,7 +234,6 @@ int main(int argc, char** argv) {
     double *a, *b;
     int a_fd, b_fd;
     float *c, *answer_c;
-    int is_passed = 0;
     struct timeval h_start, h_end;
     long duration;
     int request_id, n, sub_n;
@@ -286,7 +274,7 @@ int main(int argc, char** argv) {
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
 
-    is_passed = verify(c, answer_c, n, n);
+    verify(c, answer_c, n, n);
 
     // if (is_passed && need_output) {
     //     char filename[64];
