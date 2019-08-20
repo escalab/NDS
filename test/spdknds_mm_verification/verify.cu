@@ -133,11 +133,101 @@ int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
                 // gemm
                 gettimeofday(&h_start, NULL);
                 cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, ldc, a_sub_h, CUDA_R_16F, ldc, &beta, c_sub_f, CUDA_R_32F, ldc, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                cudaDeviceSynchronize();
                 gettimeofday(&h_end, NULL);
                 transpose_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
             }
         }   
         cudaMemcpy2D((c + (i * sub_m) * m + (j * sub_m)), m * sizeof(float), c_sub_f, out_pitch, sizeof(float) * sub_m, sub_m, cudaMemcpyDeviceToHost);
+    }
+    printf("data fetch time: %f ms\n", (float) fetch_time / 1000);
+    printf("transpose time: %f ms\n", (float) transpose_time / 1000);
+
+    munmap(hugepage_addr, HUGEPAGE_SZ);
+    cublasDestroy(handle);
+    cudaFree(a_sub_d);
+    cudaFree(b_sub_d);
+    cudaFree(c_sub_f);
+    return 0;
+}
+
+int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
+    int i, j, k;
+    double *hugepage_addr;
+    double *out_ptr;
+    struct JSONRPCClient client;
+    size_t return_size; 
+    int rc;
+    double *a_sub_d, *b_sub_d;
+    half *a_sub_h, *b_sub_h;
+    float *c_sub_f;
+
+    float alpha = 1.0;
+    float beta = 1.0;
+    struct timeval h_start, h_end;
+    unsigned long long fetch_time = 0, transpose_time = 0;
+    
+    size_t out_pitch, ldc;
+    size_t dsize;
+    cublasHandle_t handle;
+
+    // initialization
+    printf("create cublas handle\n");
+    cublasCreate(&handle);
+    printf("create cublas handle\n");
+    cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
+
+    printf("connect to spdk\n");
+    rc = connect_to_spdkrpc_server(&client);
+    if (rc) {
+        printf("cannot create conntection to SPDK RPC server");
+        return rc;
+    }
+
+    printf("map to shared page\n");
+    hugepage_addr = (double *) mmap_to_tensorstore_hugepage();
+    if (hugepage_addr == NULL) {
+        return -1;
+    }
+
+    // cuda malloc
+    printf("allocate memory\n");
+    dsize = sub_m * sub_m;
+    cudaMalloc((void **) &a_sub_d, sizeof(double) * dsize);
+    cudaMalloc((void **) &b_sub_d, sizeof(double) * dsize);
+    cudaMalloc((void **) &a_sub_h, sizeof(half) * dsize);
+    cudaMalloc((void **) &b_sub_h, sizeof(half) * dsize);
+
+    cudaMallocPitch((void **) &c_sub_f, &out_pitch, sizeof(float) * sub_m, sub_m);
+    ldc = out_pitch / sizeof(float);
+
+    printf("doing GEMM\n");
+    // blockGEMM
+    for (k = 0; k < m / sub_m; k++) {
+        for (i = 0; i < m / sub_m; i++) {
+            gettimeofday(&h_start, NULL);
+            cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i);
+            gettimeofday(&h_end, NULL);
+            fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);  
+            d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize); 
+            for (j = 0; j < m / sub_m; j++) {
+                printf("i: %d, j: %d, k: %d\n", i, j, k);
+                // memset(hugepage_addr, 0, HUGEPAGE_SZ);
+                gettimeofday(&h_start, NULL);
+                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k);
+                gettimeofday(&h_end, NULL);
+                fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+                d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_h, dsize);
+                // gemm
+                cudaMemcpy2D(c_sub_f, m * sizeof(float), (c + (i * sub_m) * m + (j * sub_m)), out_pitch, sizeof(float) * sub_m, sub_m, cudaMemcpyHostToDevice);
+                gettimeofday(&h_start, NULL);
+                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, ldc, a_sub_h, CUDA_R_16F, ldc, &beta, c_sub_f, CUDA_R_32F, ldc, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                cudaDeviceSynchronize();
+                gettimeofday(&h_end, NULL);
+                transpose_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+                cudaMemcpy2D((c + (i * sub_m) * m + (j * sub_m)), m * sizeof(float), c_sub_f, out_pitch, sizeof(float) * sub_m, sub_m, cudaMemcpyDeviceToHost);
+            }
+        }   
     }
     printf("data fetch time: %f ms\n", (float) fetch_time / 1000);
     printf("transpose time: %f ms\n", (float) transpose_time / 1000);
@@ -191,7 +281,7 @@ int main(int argc, char** argv) {
     printf("calculating the result of the sequential format\n");
     memset(c, 0, n * n * sizeof(float));
     gettimeofday(&h_start, NULL);
-    spdk_blockSgemm_half(request_id, n, sub_n, c);
+    spdk_blockSgemm_half_order(request_id, n, sub_n, c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
