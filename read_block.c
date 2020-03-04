@@ -5,6 +5,7 @@
 
 int main(int argc, char** argv) {
     int i, j, ii, jj, sub_i, offset, n, sub_n;
+    int count=0;
     FILE *fptr;
     long *sub_matrix;
     long duration;
@@ -24,10 +25,8 @@ int main(int argc, char** argv) {
     gettimeofday(&h_start, NULL);
     for (i = 0; i < n * n; i+= sub_n * sub_n) {
         fseek(fptr, i * sizeof(long), SEEK_SET);
-        fread(sub_matrix, sizeof(long), sub_n * sub_n, fptr);
-        
-    #ifdef DEBUG
-        // debug purpose
+        count += fread(sub_matrix, sizeof(long), sub_n * sub_n, fptr);
+#ifdef DEBUG
         for(ii = 0; ii < sub_n; ii++) {
             for (jj = 0; jj < sub_n; jj++) {
                 printf("%ld ", sub_matrix[ii * sub_n + jj]);
@@ -35,7 +34,7 @@ int main(int argc, char** argv) {
             printf("\n");
         }
         printf("\n");
-    #endif
+#endif
     }
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
@@ -43,5 +42,6 @@ int main(int argc, char** argv) {
     free(sub_matrix);
     fclose(fptr);
     printf("duration: %f s\n", (float) duration / 1000000);
+    printf("read %d numbers\n", count);
     return 0;
 }

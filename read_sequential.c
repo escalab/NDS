@@ -4,7 +4,7 @@
 #include <fcntl.h>
 
 int main(int argc, char** argv) {
-    int i, j, ii, jj, sub_i, offset, n, sub_n;
+    int i, j, ii, jj, sub_i, offset, n, sub_n, count = 0;
     FILE *fptr;
     long *sub_matrix;
     long duration;
@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
             for(ii = i; ii < i+sub_n; ii++) {
                 offset = (ii * n + j) * sizeof(long);
                 fseek(fptr, offset, SEEK_SET);
-                fread((sub_matrix + sub_i * sub_n), sizeof(long), sub_n, fptr);
+                count += fread((sub_matrix + sub_i * sub_n), sizeof(long), sub_n, fptr);
                 sub_i++;
             }
 
@@ -49,6 +49,6 @@ int main(int argc, char** argv) {
     free(sub_matrix);
     fclose(fptr);
     printf("duration: %f s\n", (float) duration / 1000000);
-
+    printf("read %d numbers\n", count);
     return 0;
 }
