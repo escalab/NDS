@@ -76,7 +76,7 @@
 
 #ifndef CPU_DEBUG
 // Set this to 1 to verify the correctness of the GPU-computed matrix.
-#define CPU_DEBUG 1
+#define CPU_DEBUG 0
 #endif
 
 #ifndef SHARED_MEMORY_LIMIT_64K
@@ -548,20 +548,20 @@ int main(int argc, char **argv) {
   printf("Initializing...\n");
 
   if (argc < 4) {
-    printf("usage: %s <A_matrix_path> <m_tiles> <n_tiles> <k_tiles>\n", argv[0]);
+    printf("usage: %s <A_matrix_path> <m_global> <n_global> <k_global>\n", argv[0]);
     exit(1);
   }
 
   // GEMM configuration.
   fp = fopen(argv[1], "rb");
 
-  M_TILES = atoi(argv[2]);
-  N_TILES = atoi(argv[3]);
-  K_TILES = atoi(argv[4]);
+  M_GLOBAL = atoi(argv[2]);
+  N_GLOBAL = atoi(argv[3]);
+  K_GLOBAL = atoi(argv[4]);
 
-  M_GLOBAL = M * M_TILES;
-  N_GLOBAL = N * N_TILES;
-  K_GLOBAL = K * K_TILES;
+  M_TILES = M_GLOBAL / M;
+  N_TILES = N_GLOBAL / N;
+  K_TILES = K_GLOBAL / K;
 
   checkCudaErrors(cudaEventCreate(&start));
   checkCudaErrors(cudaEventCreate(&stop));
