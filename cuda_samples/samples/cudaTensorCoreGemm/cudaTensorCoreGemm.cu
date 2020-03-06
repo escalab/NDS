@@ -541,6 +541,7 @@ __host__ void matMultiplyOnHost(double *A, half *B, float *C, float alpha,
 int main(int argc, char **argv) {
   const float alpha = 1.1f;
   const float beta = 1.2f;
+  float milliseconds = 0;
   int M_TILES, N_TILES, K_TILES, M_GLOBAL, N_GLOBAL, K_GLOBAL;
   cudaEvent_t start, stop;
   FILE *fp;
@@ -578,6 +579,8 @@ int main(int argc, char **argv) {
         "Cores.  Exiting...\n");
     exit(EXIT_WAIVED);
   }
+
+  printf("The warp size is %d.\n", deviceProp.warpSize);
 
   printf("M: %d (%d x %d)\n", M_GLOBAL, M, M_TILES);
   printf("N: %d (%d x %d)\n", N_GLOBAL, N, N_TILES);
@@ -640,9 +643,15 @@ int main(int argc, char **argv) {
   checkCudaErrors(cudaMemset(D, 0, sizeof(float) * M_GLOBAL * N_GLOBAL));
 
   size_t dsize = M_GLOBAL * K_GLOBAL;
+  checkCudaErrors(cudaEventRecord(start));
   half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
-  checkCudaErrors(cudaFree(reinterpret_cast<void *>(A_double)));
+  checkCudaErrors(cudaEventRecord(stop));
+  checkCudaErrors(cudaEventSynchronize(stop));
 
+  checkCudaErrors(cudaFree(reinterpret_cast<void *>(A_double)));
+  checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
+
+  printf("Half conversion time: %f ms\n", milliseconds);
   /*
   enum {
     // Compute the right amount of shared memory to request.
@@ -681,7 +690,7 @@ int main(int argc, char **argv) {
     dim3 gridDim;
     dim3 blockDim;
 
-    // blockDim.x must be a multple of warpSize
+    // blockDim.x must be a multple of warpSize (warpSize = 32)
     // 128x4 means we have 16 warps and a block computes a 64x64 output tile
     blockDim.x = 128;
     blockDim.y = 4;
@@ -689,7 +698,7 @@ int main(int argc, char **argv) {
     gridDim.x = (M_GLOBAL + (WMMA_M * blockDim.x / 32 - 1)) /
                 (WMMA_M * blockDim.x / 32);
     gridDim.y = (N_GLOBAL + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
-
+    printf("gridDim.x = %d, gridDim.y = %d\n", gridDim.x, gridDim.y);
     printf("Computing... using simple_wmma_gemm kernel\n");
     checkCudaErrors(cudaEventRecord(start));
     simple_wmma_gemm<<<gridDim, blockDim>>>(A, B, C, D, M_GLOBAL, N_GLOBAL,
@@ -721,8 +730,6 @@ int main(int argc, char **argv) {
   free(result_hD);
   free(result_host);
 #endif
-
-  float milliseconds = 0;
 
   checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
 
