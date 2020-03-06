@@ -76,7 +76,7 @@
 
 #ifndef CPU_DEBUG
 // Set this to 1 to verify the correctness of the GPU-computed matrix.
-#define CPU_DEBUG 0
+#define CPU_DEBUG 1
 #endif
 
 #ifndef SHARED_MEMORY_LIMIT_64K
@@ -88,7 +88,6 @@
 #endif
 
 // GPU configuration.
-
 #define WARP_SIZE 32
 
 // MMA matrix tile dimensions.
@@ -186,6 +185,30 @@ __host__ void init_host_matrices(half *a, half *b, float *c, int M_GLOBAL, int N
   for (int t = 0; t < M_GLOBAL * N_GLOBAL; t++) {
     c[t] = static_cast<float>(rand() % 3);
   }
+}
+
+__host__ void init_host_matrices(half *a, int M_GLOBAL, int N_GLOBAL) {
+  for (int i = 0; i < M_GLOBAL; i++) {
+    for (int j = 0; j < N_GLOBAL; j++) {
+      a[i * N_GLOBAL + j] = (half)(rand() % 3);
+    }
+  }
+}
+
+
+__host__ void init_host_matrices(float *c, int M_GLOBAL, int N_GLOBAL) {
+  for (int t = 0; t < M_GLOBAL * N_GLOBAL; t++) {
+    c[t] = static_cast<float>(rand() % 3);
+  }
+}
+
+
+__global__ void half_conversion_kernel(double *din, half *dout, int dsize) {
+	int idx = threadIdx.x+blockDim.x*blockIdx.x;
+	if (idx < dsize)
+	{
+		dout[idx] = din[idx];
+	}
 }
 
 // Calculate AB with NVIDIA TensorCores
@@ -498,24 +521,43 @@ __host__ void matMultiplyOnHost(half *A, half *B, float *C, float alpha,
   }
 }
 
+__host__ void matMultiplyOnHost(double *A, half *B, float *C, float alpha,
+                                float beta, int numARows, int numAColumns,
+                                int numBRows, int numBColumns, int numCRows,
+                                int numCColumns) {
+  for (int i = 0; i < numCRows; i++) {
+    for (int j = 0; j < numCColumns; j++) {
+      float temp = 0.0;
+
+      for (int k = 0; k < numAColumns; k++) {
+        temp += (float)A[i * numAColumns + k] * (float)B[j * numBRows + k];
+      }
+
+      C[i * numCColumns + j] = temp * alpha + beta * C[i * numCColumns + j];
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   const float alpha = 1.1f;
   const float beta = 1.2f;
   int M_TILES, N_TILES, K_TILES, M_GLOBAL, N_GLOBAL, K_GLOBAL;
   cudaEvent_t start, stop;
+  FILE *fp;
 
   printf("Initializing...\n");
 
   if (argc < 4) {
-    printf("usage: %s <m_tiles> <n_tiles> <k_tiles>\n", argv[0]);
+    printf("usage: %s <A_matrix_path> <m_tiles> <n_tiles> <k_tiles>\n", argv[0]);
     exit(1);
   }
 
   // GEMM configuration.
+  fp = fopen(argv[1], "rb");
 
-  M_TILES = atoi(argv[1]);
-  N_TILES = atoi(argv[2]);
-  K_TILES = atoi(argv[3]);
+  M_TILES = atoi(argv[2]);
+  N_TILES = atoi(argv[3]);
+  K_TILES = atoi(argv[4]);
 
   M_GLOBAL = M * M_TILES;
   N_GLOBAL = N * N_TILES;
@@ -523,7 +565,6 @@ int main(int argc, char **argv) {
 
   checkCudaErrors(cudaEventCreate(&start));
   checkCudaErrors(cudaEventCreate(&stop));
-  checkCudaErrors(cudaEventRecord(start));
 
   int dev = findCudaDevice(argc, (const char **)argv);
 
@@ -542,7 +583,7 @@ int main(int argc, char **argv) {
   printf("N: %d (%d x %d)\n", N_GLOBAL, N, N_TILES);
   printf("K: %d (%d x %d)\n", K_GLOBAL, K, K_TILES);
 
-  half *A_h = NULL;
+  double *A_h = NULL;
   half *B_h = NULL;
   float *C_h = NULL;
 #if CPU_DEBUG
@@ -550,7 +591,7 @@ int main(int argc, char **argv) {
   float *result_host = NULL;
 #endif
 
-  A_h = (half *)malloc(sizeof(half) * M_GLOBAL * K_GLOBAL);
+  A_h = (double *)malloc(sizeof(double) * M_GLOBAL * K_GLOBAL);
   B_h = (half *)malloc(sizeof(half) * K_GLOBAL * N_GLOBAL);
   C_h = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
 #if CPU_DEBUG
@@ -558,11 +599,19 @@ int main(int argc, char **argv) {
   result_host = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
 #endif
 
+  int count = fread(A_h, sizeof(double), M_GLOBAL * K_GLOBAL, fp);
+  if (count != M_GLOBAL * K_GLOBAL) {
+    printf("read num of element mismatched! count: %d, matrix_size: %d\n",count, M_GLOBAL * K_GLOBAL);
+  }
+
+  double *A_double = NULL;
   half *A = NULL;
   half *B = NULL;
   float *C = NULL;
   float *D = NULL;
 
+  checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A_double),
+                             sizeof(double) * M_GLOBAL * K_GLOBAL));  
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A),
                              sizeof(half) * M_GLOBAL * K_GLOBAL));
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&B),
@@ -577,17 +626,22 @@ int main(int argc, char **argv) {
   assert(((unsigned long long)C) % 128 == 0);
   assert(((unsigned long long)D) % 128 == 0);
 
-  init_host_matrices(A_h, B_h, C_h, M_GLOBAL, N_GLOBAL, K_GLOBAL);
+  init_host_matrices(B_h, N_GLOBAL, K_GLOBAL);
+  init_host_matrices(C_h, M_GLOBAL, N_GLOBAL);
 
   printf("Preparing data for GPU...\n");
 
-  checkCudaErrors(cudaMemcpy(A, A_h, sizeof(half) * M_GLOBAL * K_GLOBAL,
+  checkCudaErrors(cudaMemcpy(A_double, A_h, sizeof(double) * M_GLOBAL * K_GLOBAL,
                              cudaMemcpyHostToDevice));
   checkCudaErrors(cudaMemcpy(B, B_h, sizeof(half) * N_GLOBAL * K_GLOBAL,
                              cudaMemcpyHostToDevice));
   checkCudaErrors(cudaMemcpy(C, C_h, sizeof(float) * M_GLOBAL * N_GLOBAL,
                              cudaMemcpyHostToDevice));
   checkCudaErrors(cudaMemset(D, 0, sizeof(float) * M_GLOBAL * N_GLOBAL));
+
+  size_t dsize = M_GLOBAL * K_GLOBAL;
+  half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
+  checkCudaErrors(cudaFree(reinterpret_cast<void *>(A_double)));
 
   /*
   enum {
@@ -637,8 +691,11 @@ int main(int argc, char **argv) {
     gridDim.y = (N_GLOBAL + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
 
     printf("Computing... using simple_wmma_gemm kernel\n");
+    checkCudaErrors(cudaEventRecord(start));
     simple_wmma_gemm<<<gridDim, blockDim>>>(A, B, C, D, M_GLOBAL, N_GLOBAL,
                                             K_GLOBAL, alpha, beta);
+    checkCudaErrors(cudaEventRecord(stop));
+    checkCudaErrors(cudaEventSynchronize(stop));
 #if CPU_DEBUG
     checkCudaErrors(cudaMemcpy(result_hD, D,
                                sizeof(float) * M_GLOBAL * N_GLOBAL,
@@ -646,8 +703,7 @@ int main(int argc, char **argv) {
 #endif
   // }
 
-  checkCudaErrors(cudaEventRecord(stop));
-  checkCudaErrors(cudaEventSynchronize(stop));
+
 
 #if CPU_DEBUG
   printf("Verifying correctness of the computations...\n");
