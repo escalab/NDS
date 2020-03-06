@@ -101,16 +101,6 @@
 #define WMMA_N 16
 #define WMMA_K 16
 
-// GEMM configuration.
-
-#define M_TILES 1024
-#define N_TILES 1024
-#define K_TILES 1024
-
-#define M_GLOBAL (M * M_TILES)
-#define N_GLOBAL (N * N_TILES)
-#define K_GLOBAL (K * K_TILES)
-
 #define C_LAYOUT wmma::mem_row_major
 
 // Implementation constants.
@@ -180,7 +170,7 @@
 
 using namespace nvcuda;
 
-__host__ void init_host_matrices(half *a, half *b, float *c) {
+__host__ void init_host_matrices(half *a, half *b, float *c, int M_GLOBAL, int N_GLOBAL, int K_GLOBAL) {
   for (int i = 0; i < M_GLOBAL; i++) {
     for (int j = 0; j < K_GLOBAL; j++) {
       a[i * K_GLOBAL + j] = (half)(rand() % 3);
@@ -220,6 +210,8 @@ __global__ void tensorOp(float *D, half *A, half *B) {
   nvcuda::wmma::store_matrix_sync(D, Cmat, M, nvcuda::wmma::mem_col_major);
 }
 
+// too complicated and use too many macros to ignore this first
+/**
 __global__ void compute_gemm(const half *A, const half *B, const float *C,
                              float *D, float alpha, float beta) {
   extern __shared__ half shmem[][CHUNK_K * K + SKEW_HALF];
@@ -420,6 +412,7 @@ __global__ void compute_gemm(const half *A, const half *B, const float *C,
     __syncthreads();
   }
 }
+*/
 
 // Performs an MxNxK GEMM (C=alpha*A*B + beta*C) assuming:
 //  1) Matrices are packed in memory.
@@ -506,7 +499,31 @@ __host__ void matMultiplyOnHost(half *A, half *B, float *C, float alpha,
 }
 
 int main(int argc, char **argv) {
+  const float alpha = 1.1f;
+  const float beta = 1.2f;
+  int M_TILES, N_TILES, K_TILES, M_GLOBAL, N_GLOBAL, K_GLOBAL;
+  cudaEvent_t start, stop;
+
   printf("Initializing...\n");
+
+  if (argc < 4) {
+    printf("usage: %s <m_tiles> <n_tiles> <k_tiles>\n", argv[0]);
+    exit(1);
+  }
+
+  // GEMM configuration.
+
+  M_TILES = atoi(argv[1]);
+  N_TILES = atoi(argv[2]);
+  K_TILES = atoi(argv[3]);
+
+  M_GLOBAL = M * M_TILES;
+  N_GLOBAL = N * N_TILES;
+  K_GLOBAL = K * K_TILES;
+
+  checkCudaErrors(cudaEventCreate(&start));
+  checkCudaErrors(cudaEventCreate(&stop));
+  checkCudaErrors(cudaEventRecord(start));
 
   int dev = findCudaDevice(argc, (const char **)argv);
 
@@ -560,7 +577,7 @@ int main(int argc, char **argv) {
   assert(((unsigned long long)C) % 128 == 0);
   assert(((unsigned long long)D) % 128 == 0);
 
-  init_host_matrices(A_h, B_h, C_h);
+  init_host_matrices(A_h, B_h, C_h, M_GLOBAL, N_GLOBAL, K_GLOBAL);
 
   printf("Preparing data for GPU...\n");
 
@@ -572,6 +589,7 @@ int main(int argc, char **argv) {
                              cudaMemcpyHostToDevice));
   checkCudaErrors(cudaMemset(D, 0, sizeof(float) * M_GLOBAL * N_GLOBAL));
 
+  /*
   enum {
     // Compute the right amount of shared memory to request.
     // We need shared memory to hold per-CTA C and D matrix tiles, and to cache
@@ -585,18 +603,12 @@ int main(int argc, char **argv) {
             (BLOCK_COL_WARPS * WARP_COL_TILES) * sizeof(float))
   };
 
+
   printf("Required shared memory size: %lu Kb\n", SHMEM_SZ / 1024UL);
-
-  const float alpha = 1.1f;
-  const float beta = 1.2f;
-
-  cudaEvent_t start, stop;
-
-  checkCudaErrors(cudaEventCreate(&start));
-  checkCudaErrors(cudaEventCreate(&stop));
-  checkCudaErrors(cudaEventRecord(start));
+  */
 
   // If enough shared memory available on the GPU use high performant kernel
+  /*
   if (deviceProp.sharedMemPerMultiprocessor >= SHMEM_SZ) {
     printf("Computing... using high performance kernel compute_gemm \n");
 
@@ -611,6 +623,7 @@ int main(int argc, char **argv) {
                                cudaMemcpyDeviceToHost));
 #endif
   } else {
+    */
     dim3 gridDim;
     dim3 blockDim;
 
@@ -631,7 +644,7 @@ int main(int argc, char **argv) {
                                sizeof(float) * M_GLOBAL * N_GLOBAL,
                                cudaMemcpyDeviceToHost));
 #endif
-  }
+  // }
 
   checkCudaErrors(cudaEventRecord(stop));
   checkCudaErrors(cudaEventSynchronize(stop));
