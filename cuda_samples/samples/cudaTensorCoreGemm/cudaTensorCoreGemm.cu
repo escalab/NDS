@@ -76,7 +76,7 @@
 
 #ifndef CPU_DEBUG
 // Set this to 1 to verify the correctness of the GPU-computed matrix.
-#define CPU_DEBUG 0
+#define CPU_DEBUG 1
 #endif
 
 #ifndef SHARED_MEMORY_LIMIT_64K
@@ -190,11 +190,18 @@ __host__ void init_host_matrices(half *a, half *b, float *c, int M_GLOBAL, int N
 __host__ void init_host_matrices(half *a, int M_GLOBAL, int N_GLOBAL) {
   for (int i = 0; i < M_GLOBAL; i++) {
     for (int j = 0; j < N_GLOBAL; j++) {
-      a[i * N_GLOBAL + j] = (half)(rand() % 3);
+      a[i * N_GLOBAL + j] = (half) (rand() % 3);
     }
   }
 }
 
+__host__ void init_host_matrices(double *a, int M_GLOBAL, int N_GLOBAL) {
+  for (int i = 0; i < M_GLOBAL; i++) {
+    for (int j = 0; j < N_GLOBAL; j++) {
+      a[i * N_GLOBAL + j] = ((double) rand() / RAND_MAX);
+    }
+  }
+}
 
 __host__ void init_host_matrices(float *c, int M_GLOBAL, int N_GLOBAL) {
   for (int t = 0; t < M_GLOBAL * N_GLOBAL; t++) {
@@ -213,24 +220,23 @@ __global__ void half_conversion_kernel(double *din, half *dout, int dsize) {
 
 // Calculate AB with NVIDIA TensorCores
 // Kernel executed by 1 Warp (32 Threads)
-__global__ void tensorOp(float *D, half *A, half *B) {
-  // 1.Declare the fragments
-  nvcuda::wmma::fragment<nvcuda::wmma::matrix_a, M, N, K, half, nvcuda::wmma::col_major> Amat;
-  nvcuda::wmma::fragment<nvcuda::wmma::matrix_b, M, N, K, half, nvcuda::wmma::col_major> Bmat;
-  nvcuda::wmma::fragment<nvcuda::wmma::accumulator, M, N, K, float, void> Cmat;
+__global__ void tensorOp(half *a, half *b, float *c) {
+  // Declare the fragments
+  wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
+  wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> b_frag;
+  wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
   
-  // 2.Initialize the output to zero
-  nvcuda::wmma::fill_fragment(Cmat, 0.0f);
+  wmma::fill_fragment(acc_frag, 0.0f);
 
-  //3.Load the inputsintothefragments
-  nvcuda::wmma::load_matrix_sync(Amat, A, M);
-  nvcuda::wmma::load_matrix_sync(Bmat, B, K);
+  // 3. Load the inputsintothefragments
+  nvcuda::wmma::load_matrix_sync(a_frag, a, WMMA_M);
+  nvcuda::wmma::load_matrix_sync(b_frag, b, WMMA_K);
 
-  //4.Perform the matrix multiplication
-  nvcuda::wmma::mma_sync(Cmat, Amat, Bmat, Cmat);
+  // 4. Perform the matrix multiplication
+  nvcuda::wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
 
-  //5.Store the result from fragment to global
-  nvcuda::wmma::store_matrix_sync(D, Cmat, M, nvcuda::wmma::mem_col_major);
+  // 5. Store the result from fragment to global
+  nvcuda::wmma::store_matrix_sync(c, acc_frag, WMMA_N, nvcuda::wmma::mem_row_major);
 }
 
 // too complicated and use too many macros to ignore this first
@@ -521,30 +527,32 @@ __host__ void matMultiplyOnHost(half *A, half *B, float *C, float alpha,
   }
 }
 
-__host__ void matMultiplyOnHost(double *A, half *B, float *C, float alpha,
+__host__ void matMultiplyOnHost(double *A, double *B, float *C, float alpha,
                                 float beta, int numARows, int numAColumns,
                                 int numBRows, int numBColumns, int numCRows,
                                 int numCColumns) {
   for (int i = 0; i < numCRows; i++) {
     for (int j = 0; j < numCColumns; j++) {
-      float temp = 0.0;
-
       for (int k = 0; k < numAColumns; k++) {
-        temp += (float)A[i * numAColumns + k] * (float)B[j * numBRows + k];
+        C[i * numCColumns + j] += (float)A[i * numAColumns + k] * (float)B[j * numBRows + k];
       }
 
-      C[i * numCColumns + j] = temp * alpha + beta * C[i * numCColumns + j];
+      // C[i * numCColumns + j] = temp * alpha + beta * C[i * numCColumns + j];
     }
   }
 }
 
 int main(int argc, char **argv) {
-  const float alpha = 1.1f;
-  const float beta = 1.2f;
+  const float alpha = 1.0f;
+  const float beta = 0.0f;
   float milliseconds = 0;
   int M_TILES, N_TILES, K_TILES, M_GLOBAL, N_GLOBAL, K_GLOBAL;
   cudaEvent_t start, stop;
   FILE *fp;
+
+  int i, j, k, ii, jj, kk;
+  int i_idx, j_idx, k_idx;
+  size_t dsize = WMMA_M * WMMA_K;
 
   printf("Initializing...\n");
 
@@ -587,19 +595,23 @@ int main(int argc, char **argv) {
   printf("K: %d (%d x %d)\n", K_GLOBAL, K, K_TILES);
 
   double *A_h = NULL;
-  half *B_h = NULL;
+  double *B_h = NULL;
   float *C_h = NULL;
+
 #if CPU_DEBUG
   float *result_hD = NULL;
   float *result_host = NULL;
 #endif
 
   A_h = (double *)malloc(sizeof(double) * M_GLOBAL * K_GLOBAL);
-  B_h = (half *)malloc(sizeof(half) * K_GLOBAL * N_GLOBAL);
+  B_h = (double *)malloc(sizeof(double) * K_GLOBAL * N_GLOBAL);
   C_h = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
+  
 #if CPU_DEBUG
   result_hD = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
   result_host = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
+  memset(result_hD, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
+  memset(result_host, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
 #endif
 
   int count = fread(A_h, sizeof(double), M_GLOBAL * K_GLOBAL, fp);
@@ -607,118 +619,128 @@ int main(int argc, char **argv) {
     printf("read num of element mismatched! count: %d, matrix_size: %d\n",count, M_GLOBAL * K_GLOBAL);
   }
 
+  init_host_matrices(B_h, N_GLOBAL, K_GLOBAL);
+
+  // init_host_matrices(C_h, M_GLOBAL, N_GLOBAL);
+  memset(C_h, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
+
+  // printf("A = \n");
+  // for (i = 0; i < M_GLOBAL; i++) {
+  //   for (j = 0; j < K_GLOBAL; j++) {
+  //     printf("%f ", A_h[i*K_GLOBAL+j]);
+  //   }
+  //   printf("\n");
+  // }
+  // printf("\n");
+
+  // printf("B = \n");
+  // for (i = 0; i < K_GLOBAL; i++) {
+  //   for (j = 0; j < N_GLOBAL; j++) {
+  //     printf("%f ", B_h[i*N_GLOBAL+j]);
+  //   }
+  //   printf("\n");
+  // }
+  // printf("\n");
+
+
+  // printf("C = \n");
+  // for (i = 0; i < M_GLOBAL; i++) {
+  //   for (j = 0; j < N_GLOBAL; j++) {
+  //     printf("%f ", C_h[i*N_GLOBAL+j]);
+  //   }
+  //   printf("\n");
+  // }
+
+  printf("\n");
+
   double *A_double = NULL;
   half *A = NULL;
+  double *B_double = NULL;
   half *B = NULL;
   float *C = NULL;
   float *D = NULL;
 
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A_double),
-                             sizeof(double) * M_GLOBAL * K_GLOBAL));  
+                             sizeof(double) * WMMA_M * WMMA_K));  
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A),
-                             sizeof(half) * M_GLOBAL * K_GLOBAL));
+                             sizeof(half) * WMMA_M * WMMA_K));
+  checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&B_double),
+                             sizeof(double) * WMMA_M * WMMA_K));  
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&B),
-                             sizeof(half) * N_GLOBAL * K_GLOBAL));
+                             sizeof(half) * WMMA_N * WMMA_K));
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&C),
-                             sizeof(float) * M_GLOBAL * N_GLOBAL));
+                             sizeof(float) * WMMA_M * WMMA_N));
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&D),
-                             sizeof(float) * M_GLOBAL * N_GLOBAL));
+                             sizeof(float) * WMMA_M * WMMA_N));
 
   assert(((unsigned long long)A) % 128 == 0);
   assert(((unsigned long long)B) % 128 == 0);
   assert(((unsigned long long)C) % 128 == 0);
   assert(((unsigned long long)D) % 128 == 0);
 
-  init_host_matrices(B_h, N_GLOBAL, K_GLOBAL);
-  init_host_matrices(C_h, M_GLOBAL, N_GLOBAL);
 
   printf("Preparing data for GPU...\n");
 
-  checkCudaErrors(cudaMemcpy(A_double, A_h, sizeof(double) * M_GLOBAL * K_GLOBAL,
-                             cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMemcpy(B, B_h, sizeof(half) * N_GLOBAL * K_GLOBAL,
-                             cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMemcpy(C, C_h, sizeof(float) * M_GLOBAL * N_GLOBAL,
-                             cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMemset(D, 0, sizeof(float) * M_GLOBAL * N_GLOBAL));
+  // checkCudaErrors(cudaMemcpy(A_double, A_h, sizeof(double) * WMMA_M * WMMA_K,
+  //                            cudaMemcpyHostToDevice));
+  // checkCudaErrors(cudaMemcpy(B, B_h, sizeof(half) * WMMA_N * WMMA_K,
+  //                            cudaMemcpyHostToDevice));
+  // checkCudaErrors(cudaMemcpy(C, C_h, sizeof(float) * WMMA_M * WMMA_N,
+  //                            cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemset(C, 0, sizeof(float) * WMMA_M * WMMA_N));
 
-  size_t dsize = M_GLOBAL * K_GLOBAL;
   checkCudaErrors(cudaEventRecord(start));
-  half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
+  // half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
   checkCudaErrors(cudaEventRecord(stop));
   checkCudaErrors(cudaEventSynchronize(stop));
 
-  checkCudaErrors(cudaFree(reinterpret_cast<void *>(A_double)));
   checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
 
   printf("Half conversion time: %f ms\n", milliseconds);
-  /*
-  enum {
-    // Compute the right amount of shared memory to request.
-    // We need shared memory to hold per-CTA C and D matrix tiles, and to cache
-    // per-CTA chunks
-    // of the A and B matrices. Therefore, the right amount to request is the
-    // maximum of those
-    // two numbers.
-    SHMEM_SZ = MAX(
-        sizeof(half) * (BLOCK_COL_TILES * M) * (CHUNK_K * K + SKEW_HALF) * 2,
-        M * (BLOCK_ROW_WARPS * WARP_ROW_TILES) * N *
-            (BLOCK_COL_WARPS * WARP_COL_TILES) * sizeof(float))
-  };
 
+  checkCudaErrors(cudaEventRecord(start));
+  // custom block gemm
+  for (i = 0; i < M_GLOBAL; i += WMMA_M) {
+    for (j = 0; j < N_GLOBAL; j += WMMA_N) {
+      for (k = 0; k < K_GLOBAL; k += WMMA_K) {
+        // fill the block
+        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
+          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
+            for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
+              // printf("C[%d][%d] = C_h[%d][%d]\n", i_idx, j_idx, ii, jj);
+              // printf("A[%d][%d] = A_h[%d][%d]\n", i_idx, k_idx, ii, kk);
+              // printf("B[%d][%d] = B_h[%d][%d]\n", k_idx, j_idx, kk, jj);
+              // printf("\n");
+              checkCudaErrors(cudaMemcpy((A_double + i_idx * WMMA_K + k_idx), (A_h + ii*K_GLOBAL + kk), sizeof(double),
+              cudaMemcpyHostToDevice));
+              checkCudaErrors(cudaMemcpy((B_double + k_idx * WMMA_N + j_idx), (B_h + kk * N_GLOBAL + jj), sizeof(double),
+              cudaMemcpyHostToDevice));
+              checkCudaErrors(cudaMemcpy((C + i_idx * WMMA_N + j_idx), (C_h + ii * N_GLOBAL + jj), sizeof(float),
+              cudaMemcpyHostToDevice));
+            }
+          }
+        }
+        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
+        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
+        tensorOp<<<1, 32>>>(A, B, C);
 
-  printf("Required shared memory size: %lu Kb\n", SHMEM_SZ / 1024UL);
-  */
-
-  // If enough shared memory available on the GPU use high performant kernel
-  /*
-  if (deviceProp.sharedMemPerMultiprocessor >= SHMEM_SZ) {
-    printf("Computing... using high performance kernel compute_gemm \n");
-
-    checkCudaErrors(cudaFuncSetAttribute(
-        compute_gemm, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ));
-    checkKernelErrors(
-        (compute_gemm<<<deviceProp.multiProcessorCount, THREADS_PER_BLOCK,
-                        SHMEM_SZ>>>(A, B, C, D, alpha, beta)));
-#if CPU_DEBUG
-    checkCudaErrors(cudaMemcpy(result_hD, D,
-                               sizeof(float) * M_GLOBAL * N_GLOBAL,
-                               cudaMemcpyDeviceToHost));
-#endif
-  } else {
-    */
-    dim3 gridDim;
-    dim3 blockDim;
-
-    // blockDim.x must be a multple of warpSize (warpSize = 32)
-    // 128x4 means we have 16 warps and a block computes a 64x64 output tile
-    blockDim.x = 128;
-    blockDim.y = 4;
-
-    gridDim.x = (M_GLOBAL + (WMMA_M * blockDim.x / 32 - 1)) /
-                (WMMA_M * blockDim.x / 32);
-    gridDim.y = (N_GLOBAL + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
-    printf("gridDim.x = %d, gridDim.y = %d\n", gridDim.x, gridDim.y);
-    printf("Computing... using simple_wmma_gemm kernel\n");
-    checkCudaErrors(cudaEventRecord(start));
-    simple_wmma_gemm<<<gridDim, blockDim>>>(A, B, C, D, M_GLOBAL, N_GLOBAL,
-                                            K_GLOBAL, alpha, beta);
-    checkCudaErrors(cudaEventRecord(stop));
-    checkCudaErrors(cudaEventSynchronize(stop));
-#if CPU_DEBUG
-    checkCudaErrors(cudaMemcpy(result_hD, D,
-                               sizeof(float) * M_GLOBAL * N_GLOBAL,
-                               cudaMemcpyDeviceToHost));
-#endif
-  // }
-
-
+      #if CPU_DEBUG
+        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
+          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
+            checkCudaErrors(cudaMemcpy((result_hD + ii * N_GLOBAL + jj), (C + i_idx * WMMA_N + j_idx), sizeof(float), cudaMemcpyDeviceToHost));
+          }
+        }
+      #endif
+      }
+    }
+  }
+  checkCudaErrors(cudaEventRecord(stop));
+  checkCudaErrors(cudaEventSynchronize(stop));
 
 #if CPU_DEBUG
   printf("Verifying correctness of the computations...\n");
 
-  memcpy(result_host, C_h, sizeof(float) * M_GLOBAL * N_GLOBAL);
-
+  // memcpy(result_host, C_h, sizeof(float) * M_GLOBAL * N_GLOBAL);
   matMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
                     K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
 
@@ -742,7 +764,9 @@ int main(int argc, char **argv) {
   free(A_h);
   free(B_h);
   free(C_h);
+  checkCudaErrors(cudaFree(reinterpret_cast<void *>(A_double)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(A)));
+  checkCudaErrors(cudaFree(reinterpret_cast<void *>(B_double)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(B)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(C)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(D)));
