@@ -223,20 +223,19 @@ __global__ void half_conversion_kernel(double *din, half *dout, int dsize) {
 __global__ void tensorOp(half *a, half *b, float *c) {
   // Declare the fragments
   wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
-  wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> b_frag;
-  wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
+  wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
+  wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
   
-  wmma::fill_fragment(acc_frag, 0.0f);
-
-  // 3. Load the inputsintothefragments
+  // 3. Load the inputs into the fragments
   nvcuda::wmma::load_matrix_sync(a_frag, a, WMMA_M);
   nvcuda::wmma::load_matrix_sync(b_frag, b, WMMA_K);
+  nvcuda::wmma::load_matrix_sync(c_frag, c, WMMA_N, wmma::mem_row_major);
 
   // 4. Perform the matrix multiplication
-  nvcuda::wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
+  nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
 
   // 5. Store the result from fragment to global
-  nvcuda::wmma::store_matrix_sync(c, acc_frag, WMMA_N, nvcuda::wmma::mem_row_major);
+  nvcuda::wmma::store_matrix_sync(c, c_frag, WMMA_N, nvcuda::wmma::mem_row_major);
 }
 
 // too complicated and use too many macros to ignore this first
@@ -534,13 +533,35 @@ __host__ void matMultiplyOnHost(double *A, double *B, float *C, float alpha,
   for (int i = 0; i < numCRows; i++) {
     for (int j = 0; j < numCColumns; j++) {
       for (int k = 0; k < numAColumns; k++) {
-        C[i * numCColumns + j] += (float)A[i * numAColumns + k] * (float)B[j * numBRows + k];
+        // beware of row-major or col-major store
+        // C[i * numCColumns + j] += (float)A[i * numAColumns + k] * (float)B[j * numBRows + k];
+        C[i * numCColumns + j] += (float)A[i * numAColumns + k] * (float)B[k * numBColumns + j];
       }
 
       // C[i * numCColumns + j] = temp * alpha + beta * C[i * numCColumns + j];
     }
   }
 }
+
+__host__ void blockMatMultiplyOnHost(double *A, double *B, float *C, float alpha,
+  float beta, int numARows, int numAColumns, int numBRows, int numBColumns, int numCRows, int numCColumns) {
+  int i, j, k, ii, jj, kk;
+  for (i = 0; i < numCRows; i += WMMA_M) {
+    for (j = 0; j < numCColumns; j += WMMA_N) {
+      for (k = 0; k < numAColumns; k += WMMA_K) {
+        for (ii = i; ii < (i + WMMA_M); ii++) {
+          for (jj = j; jj < (j + WMMA_N); jj++) {
+            for (kk = k; kk < (k + WMMA_K); kk++) {
+              C[ii * numCColumns + jj] += A[ii * numAColumns + kk] * B[kk * numBColumns + jj];
+            }
+          }
+        }
+      }
+      // C[i * numCColumns + j] = temp * alpha + beta * C[i * numCColumns + j];
+    }
+  }
+}
+
 
 int main(int argc, char **argv) {
   const float alpha = 1.0f;
@@ -690,15 +711,6 @@ int main(int argc, char **argv) {
   checkCudaErrors(cudaMemset(C, 0, sizeof(float) * WMMA_M * WMMA_N));
 
   checkCudaErrors(cudaEventRecord(start));
-  // half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
-  checkCudaErrors(cudaEventRecord(stop));
-  checkCudaErrors(cudaEventSynchronize(stop));
-
-  checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
-
-  printf("Half conversion time: %f ms\n", milliseconds);
-
-  checkCudaErrors(cudaEventRecord(start));
   // custom block gemm
   for (i = 0; i < M_GLOBAL; i += WMMA_M) {
     for (j = 0; j < N_GLOBAL; j += WMMA_N) {
@@ -724,6 +736,14 @@ int main(int argc, char **argv) {
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
         tensorOp<<<1, 32>>>(A, B, C);
 
+        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
+          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
+            checkCudaErrors(cudaMemcpy((C_h + ii * N_GLOBAL + jj), (C + i_idx * WMMA_N + j_idx), sizeof(float), cudaMemcpyDeviceToHost));
+            // printf("%f ", C_h[ii*N_GLOBAL+jj]);
+          }
+          // printf("\n");
+        }
+        // printf("\n");
       #if CPU_DEBUG
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
@@ -741,13 +761,15 @@ int main(int argc, char **argv) {
   printf("Verifying correctness of the computations...\n");
 
   // memcpy(result_host, C_h, sizeof(float) * M_GLOBAL * N_GLOBAL);
-  matMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
-                    K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
-
-  for (int i = 0; i < N_GLOBAL * M_GLOBAL; i++) {
+  // matMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
+  //                   K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
+  blockMatMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
+    K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
+  for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
     if (fabs(result_hD[i] - result_host[i]) > 0.1f)
       printf("mismatch i=%d result_hD=%f result_host=%f\n", i, result_hD[i],
              result_host[i]);
+             
   }
   free(result_hD);
   free(result_host);
