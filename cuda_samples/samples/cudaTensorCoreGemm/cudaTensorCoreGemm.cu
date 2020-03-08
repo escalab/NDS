@@ -620,6 +620,9 @@ int main(int argc, char **argv) {
   float *C_h = NULL;
 
 #if CPU_DEBUG
+  double *A_submatrix_h = NULL;
+  double *B_submatrix_h = NULL;
+  float *C_submatrix_h = NULL;
   float *result_hD = NULL;
   float *result_host = NULL;
 #endif
@@ -629,6 +632,9 @@ int main(int argc, char **argv) {
   C_h = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
   
 #if CPU_DEBUG
+  A_submatrix_h = (double *)malloc(sizeof(double) * WMMA_M * WMMA_K);
+  B_submatrix_h = (double *)malloc(sizeof(double) * WMMA_K * WMMA_N);
+  C_submatrix_h = (float *)malloc(sizeof(float) * WMMA_M * WMMA_N);
   result_hD = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
   result_host = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
   memset(result_hD, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
@@ -744,27 +750,57 @@ int main(int argc, char **argv) {
           // printf("\n");
         }
         // printf("\n");
-      #if CPU_DEBUG
-        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
-          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            checkCudaErrors(cudaMemcpy((result_hD + ii * N_GLOBAL + jj), (C + i_idx * WMMA_N + j_idx), sizeof(float), cudaMemcpyDeviceToHost));
-          }
-        }
-      #endif
       }
     }
   }
   checkCudaErrors(cudaEventRecord(stop));
   checkCudaErrors(cudaEventSynchronize(stop));
+  checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
 
+  printf("Time: %f ms\n", milliseconds);
+  printf("TFLOPS: %.2f\n", static_cast<double>((static_cast<double>(M_GLOBAL) *
+                                                N_GLOBAL * K_GLOBAL * 2) /
+                                               (milliseconds / 1000.)) /
+                               1e12);
 #if CPU_DEBUG
   printf("Verifying correctness of the computations...\n");
-
-  // memcpy(result_host, C_h, sizeof(float) * M_GLOBAL * N_GLOBAL);
+  memcpy(result_hD, C_h, sizeof(float) * M_GLOBAL * N_GLOBAL);
   // matMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
   //                   K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
-  blockMatMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
-    K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
+  checkCudaErrors(cudaEventRecord(start));
+  // blockMatMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
+  //   K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
+  // custom block gemm
+  for (i = 0; i < M_GLOBAL; i += WMMA_M) {
+    for (j = 0; j < N_GLOBAL; j += WMMA_N) {
+      for (k = 0; k < K_GLOBAL; k += WMMA_K) {
+        // fill the block
+        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
+          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
+            for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
+              C_submatrix_h[i_idx * WMMA_N + j_idx] = result_host[ii * N_GLOBAL + jj];
+              A_submatrix_h[i_idx * WMMA_K + k_idx] = A_h[ii*K_GLOBAL + kk];
+              B_submatrix_h[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];
+            }
+          }
+        }
+        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
+        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
+        blockMatMultiplyOnHost(A_submatrix_h, B_submatrix_h, C_submatrix_h, alpha, beta, WMMA_M, WMMA_K, WMMA_K, WMMA_N, WMMA_M, WMMA_N);
+        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
+          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
+            result_host[ii * N_GLOBAL + jj] = C_submatrix_h[i_idx * WMMA_N + j_idx];
+          }
+        }
+      }
+    }
+  }
+  
+  checkCudaErrors(cudaEventRecord(stop));
+  checkCudaErrors(cudaEventSynchronize(stop));
+  checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
+
+  printf("Time: %f ms\n", milliseconds);
   for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
     if (fabs(result_hD[i] - result_host[i]) > 0.1f)
       printf("mismatch i=%d result_hD=%f result_host=%f\n", i, result_hD[i],
@@ -773,15 +809,10 @@ int main(int argc, char **argv) {
   }
   free(result_hD);
   free(result_host);
+  free(A_submatrix_h);
+  free(B_submatrix_h);
+  free(C_submatrix_h);
 #endif
-
-  checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
-
-  printf("Time: %f ms\n", milliseconds);
-  printf("TFLOPS: %.2f\n", static_cast<double>((static_cast<double>(M_GLOBAL) *
-                                                N_GLOBAL * K_GLOBAL * 2) /
-                                               (milliseconds / 1000.)) /
-                               1e12);
 
   free(A_h);
   free(B_h);
