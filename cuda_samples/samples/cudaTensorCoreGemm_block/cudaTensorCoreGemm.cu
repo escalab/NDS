@@ -729,18 +729,17 @@ int main(int argc, char **argv) {
   // custom block gemm
   for (i = 0; i < M_GLOBAL; i += WMMA_M) {
     for (j = 0; j < N_GLOBAL; j += WMMA_N) {
+      checkCudaErrors(cudaMemcpy(C, (C_h + i * N_GLOBAL + j), WMMA_M * WMMA_N * sizeof(float), cudaMemcpyHostToDevice));
       for (k = 0; k < K_GLOBAL; k += WMMA_K) {
         // fill the block
         checkCudaErrors(cudaMemcpy(A_double, (A_h + i * K_GLOBAL + k), WMMA_M * WMMA_K * sizeof(double), cudaMemcpyHostToDevice));
         checkCudaErrors(cudaMemcpy(B_double, (B_h + k * N_GLOBAL + j), WMMA_K * WMMA_N * sizeof(double), cudaMemcpyHostToDevice));
-        checkCudaErrors(cudaMemcpy(C, (C_h + i * N_GLOBAL + j), WMMA_M * WMMA_N * sizeof(float), cudaMemcpyHostToDevice));
 
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
         tensorOp<<<1, 32>>>(A, B, C);
-
-        checkCudaErrors(cudaMemcpy((C_h + i * N_GLOBAL + j), C, WMMA_M * WMMA_N * sizeof(float), cudaMemcpyDeviceToHost));
       }
+      checkCudaErrors(cudaMemcpy((C_h + i * N_GLOBAL + j), C, WMMA_M * WMMA_N * sizeof(float), cudaMemcpyDeviceToHost));
     }
   }
   checkCudaErrors(cudaEventRecord(stop));
@@ -759,18 +758,18 @@ int main(int argc, char **argv) {
   checkCudaErrors(cudaEventRecord(start));
   // blockMatMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
   //   K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
+  
   // custom block gemm
   for (i = 0; i < M_GLOBAL; i += WMMA_M) {
     for (j = 0; j < N_GLOBAL; j += WMMA_N) {
+      memcpy(C_submatrix_h, (result_host + i * N_GLOBAL + j), WMMA_M * WMMA_N * sizeof(float));
       for (k = 0; k < K_GLOBAL; k += WMMA_K) {
         // fill the block
         memcpy(A_submatrix_h, (A_h + i * K_GLOBAL + k), WMMA_M * WMMA_K * sizeof(double));
         memcpy(B_submatrix_h, (B_h + k * N_GLOBAL + j), WMMA_K * WMMA_N * sizeof(double));
-        memcpy(C_submatrix_h, (result_host + i * N_GLOBAL + j), WMMA_M * WMMA_N * sizeof(float));
-
         blockMatMultiplyOnHost(A_submatrix_h, B_submatrix_h, C_submatrix_h, alpha, beta, WMMA_M, WMMA_K, WMMA_K, WMMA_N, WMMA_M, WMMA_N);
-        memcpy((result_host + i * N_GLOBAL + j), C_submatrix_h, WMMA_M * WMMA_N * sizeof(float));
       }
+      memcpy((result_host + i * N_GLOBAL + j), C_submatrix_h, WMMA_M * WMMA_N * sizeof(float));
     }
   }
   
