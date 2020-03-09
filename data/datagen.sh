@@ -6,6 +6,7 @@ TYPE="long"
 
 if [ "$#" -ne 3 ]; then
     echo "usage: $0 <matrix_size> <submatrix_size> <double_type?>"
+    exit 1
 fi
 
 if [[ $3 -eq 0 ]] ; then
