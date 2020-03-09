@@ -725,12 +725,15 @@ int main(int argc, char **argv) {
       for (k = 0; k < K_GLOBAL; k += WMMA_K) {
         // fill the block
         checkCudaErrors(cudaMemcpy(A_double, (A_h + i * K_GLOBAL + k), WMMA_M * WMMA_K * sizeof(double), cudaMemcpyHostToDevice));
+        for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
+            checkCudaErrors(cudaMemcpy((B_double + k_idx * WMMA_N + j_idx), (B_h + kk * N_GLOBAL + jj), sizeof(double),
+            cudaMemcpyHostToDevice));
+          }
+        }
+
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-              checkCudaErrors(cudaMemcpy((B_double + k_idx * WMMA_N + j_idx), (B_h + kk * N_GLOBAL + jj), sizeof(double),
-              cudaMemcpyHostToDevice));
-            }
             checkCudaErrors(cudaMemcpy((C + i_idx * WMMA_N + j_idx), (C_h + ii * N_GLOBAL + jj), sizeof(float),
             cudaMemcpyHostToDevice));
           }
@@ -773,16 +776,16 @@ int main(int argc, char **argv) {
       for (k = 0; k < K_GLOBAL; k += WMMA_K) {
         // fill the block
         memcpy(A_submatrix_h, (A_h + i * K_GLOBAL + k), WMMA_M * WMMA_K * sizeof(double));
+        for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
+            B_submatrix_h[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];
+          }
+        }
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-              B_submatrix_h[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];
-            }
             C_submatrix_h[i_idx * WMMA_N + j_idx] = result_host[ii * N_GLOBAL + jj];
           }
         }
-        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
-        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
         blockMatMultiplyOnHost(A_submatrix_h, B_submatrix_h, C_submatrix_h, alpha, beta, WMMA_M, WMMA_K, WMMA_K, WMMA_N, WMMA_M, WMMA_N);
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {

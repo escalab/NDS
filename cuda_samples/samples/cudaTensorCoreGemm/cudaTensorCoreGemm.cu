@@ -724,20 +724,24 @@ int main(int argc, char **argv) {
         // fill the block
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-              // printf("C[%d][%d] = C_h[%d][%d]\n", i_idx, j_idx, ii, jj);
-              // printf("A[%d][%d] = A_h[%d][%d]\n", i_idx, k_idx, ii, kk);
-              // printf("B[%d][%d] = B_h[%d][%d]\n", k_idx, j_idx, kk, jj);
-              // printf("\n");
-              checkCudaErrors(cudaMemcpy((A_double + i_idx * WMMA_K + k_idx), (A_h + ii*K_GLOBAL + kk), sizeof(double),
-              cudaMemcpyHostToDevice));
-              checkCudaErrors(cudaMemcpy((B_double + k_idx * WMMA_N + j_idx), (B_h + kk * N_GLOBAL + jj), sizeof(double),
-              cudaMemcpyHostToDevice));
-            }
             checkCudaErrors(cudaMemcpy((C + i_idx * WMMA_N + j_idx), (C_h + ii * N_GLOBAL + jj), sizeof(float),
               cudaMemcpyHostToDevice));
           }
         }
+        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
+            checkCudaErrors(cudaMemcpy((A_double + i_idx * WMMA_K + k_idx), (A_h + ii*K_GLOBAL + kk), sizeof(double),
+            cudaMemcpyHostToDevice));          
+          }
+        }
+
+        for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
+            checkCudaErrors(cudaMemcpy((B_double + k_idx * WMMA_N + j_idx), (B_h + kk * N_GLOBAL + jj), sizeof(double),
+            cudaMemcpyHostToDevice));
+          }
+        }
+
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
         tensorOp<<<1, 32>>>(A, B, C);
@@ -775,17 +779,24 @@ int main(int argc, char **argv) {
     for (j = 0; j < N_GLOBAL; j += WMMA_N) {
       for (k = 0; k < K_GLOBAL; k += WMMA_K) {
         // fill the block
+        // fill the block
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-              A_submatrix_h[i_idx * WMMA_K + k_idx] = A_h[ii*K_GLOBAL + kk];
-              B_submatrix_h[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];
-            }
             C_submatrix_h[i_idx * WMMA_N + j_idx] = result_host[ii * N_GLOBAL + jj];
+
           }
         }
-        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
-        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
+        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
+            A_submatrix_h[i_idx * WMMA_K + k_idx] = A_h[ii*K_GLOBAL + kk];         
+          }
+        }
+
+        for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
+            B_submatrix_h[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];
+          }
+        }
         blockMatMultiplyOnHost(A_submatrix_h, B_submatrix_h, C_submatrix_h, alpha, beta, WMMA_M, WMMA_K, WMMA_K, WMMA_N, WMMA_M, WMMA_N);
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
