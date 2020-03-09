@@ -733,9 +733,9 @@ int main(int argc, char **argv) {
               cudaMemcpyHostToDevice));
               checkCudaErrors(cudaMemcpy((B_double + k_idx * WMMA_N + j_idx), (B_h + kk * N_GLOBAL + jj), sizeof(double),
               cudaMemcpyHostToDevice));
-              checkCudaErrors(cudaMemcpy((C + i_idx * WMMA_N + j_idx), (C_h + ii * N_GLOBAL + jj), sizeof(float),
-              cudaMemcpyHostToDevice));
             }
+            checkCudaErrors(cudaMemcpy((C + i_idx * WMMA_N + j_idx), (C_h + ii * N_GLOBAL + jj), sizeof(float),
+              cudaMemcpyHostToDevice));
           }
         }
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
@@ -758,7 +758,7 @@ int main(int argc, char **argv) {
   checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
 
   printf("Time: %f ms\n", milliseconds);
-  printf("TFLOPS: %.2f\n", static_cast<double>((static_cast<double>(M_GLOBAL) *
+  printf("TFLOPS: %f\n", static_cast<double>((static_cast<double>(M_GLOBAL) *
                                                 N_GLOBAL * K_GLOBAL * 2) /
                                                (milliseconds / 1000.)) /
                                1e12);
@@ -778,10 +778,10 @@ int main(int argc, char **argv) {
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
             for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-              C_submatrix_h[i_idx * WMMA_N + j_idx] = result_host[ii * N_GLOBAL + jj];
               A_submatrix_h[i_idx * WMMA_K + k_idx] = A_h[ii*K_GLOBAL + kk];
               B_submatrix_h[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];
             }
+            C_submatrix_h[i_idx * WMMA_N + j_idx] = result_host[ii * N_GLOBAL + jj];
           }
         }
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
