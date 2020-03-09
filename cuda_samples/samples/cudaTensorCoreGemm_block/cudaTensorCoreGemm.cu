@@ -643,13 +643,20 @@ int main(int argc, char **argv) {
   memset(result_host, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
 #endif
 
-  int count = fread(A_h, sizeof(double), M_GLOBAL * K_GLOBAL, fp);
+  int count;
+  count = fread(A_h, sizeof(double), M_GLOBAL * K_GLOBAL, fp);
   if (count != M_GLOBAL * K_GLOBAL) {
     printf("read num of element mismatched! count: %d, matrix_size: %d\n",count, M_GLOBAL * K_GLOBAL);
   }
 
-  init_host_matrices(B_h, N_GLOBAL, K_GLOBAL);
+  fseek(fp, 0, SEEK_SET);
 
+  count = fread(B_h, sizeof(double), K_GLOBAL * N_GLOBAL, fp);
+  if (count != K_GLOBAL * N_GLOBAL) {
+    printf("read num of element mismatched! count: %d, matrix_size: %d\n",count, K_GLOBAL * N_GLOBAL);
+  }
+  
+  // init_host_matrices(B_h, N_GLOBAL, K_GLOBAL);
   // init_host_matrices(C_h, M_GLOBAL, N_GLOBAL);
   memset(C_h, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
 
@@ -725,12 +732,7 @@ int main(int argc, char **argv) {
       for (k = 0; k < K_GLOBAL; k += WMMA_K) {
         // fill the block
         checkCudaErrors(cudaMemcpy(A_double, (A_h + i * K_GLOBAL + k), WMMA_M * WMMA_K * sizeof(double), cudaMemcpyHostToDevice));
-        for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-            checkCudaErrors(cudaMemcpy((B_double + k_idx * WMMA_N + j_idx), (B_h + kk * N_GLOBAL + jj), sizeof(double),
-            cudaMemcpyHostToDevice));
-          }
-        }
+        checkCudaErrors(cudaMemcpy(B_double, (B_h + k * N_GLOBAL + j), WMMA_K * WMMA_N * sizeof(double), cudaMemcpyHostToDevice));
 
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
@@ -776,6 +778,7 @@ int main(int argc, char **argv) {
       for (k = 0; k < K_GLOBAL; k += WMMA_K) {
         // fill the block
         memcpy(A_submatrix_h, (A_h + i * K_GLOBAL + k), WMMA_M * WMMA_K * sizeof(double));
+        memcpy(B_submatrix_h, (B_h + k * N_GLOBAL + j), WMMA_K * WMMA_N * sizeof(double));
         for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
           for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
             B_submatrix_h[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];

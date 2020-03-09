@@ -641,13 +641,20 @@ int main(int argc, char **argv) {
   memset(result_host, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
 #endif
 
-  int count = fread(A_h, sizeof(double), M_GLOBAL * K_GLOBAL, fp);
+  int count;
+  count = fread(A_h, sizeof(double), M_GLOBAL * K_GLOBAL, fp);
   if (count != M_GLOBAL * K_GLOBAL) {
-    printf("read num of element mismatched! count: %d, matrix_size: %d\n",count, M_GLOBAL * K_GLOBAL);
+    printf("read num of element mismatched! count: %d, matrix_size: %d\n", count, M_GLOBAL * K_GLOBAL);
   }
 
-  init_host_matrices(B_h, N_GLOBAL, K_GLOBAL);
+  fseek(fp, 0, SEEK_SET);
 
+  count = fread(B_h, sizeof(double), K_GLOBAL * N_GLOBAL, fp);
+  if (count != K_GLOBAL * N_GLOBAL) {
+    printf("read num of element mismatched! count: %d, matrix_size: %d\n", count, K_GLOBAL * N_GLOBAL);
+  }
+
+  // init_host_matrices(B_h, N_GLOBAL, K_GLOBAL);
   // init_host_matrices(C_h, M_GLOBAL, N_GLOBAL);
   memset(C_h, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
 
@@ -783,7 +790,6 @@ int main(int argc, char **argv) {
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
             C_submatrix_h[i_idx * WMMA_N + j_idx] = result_host[ii * N_GLOBAL + jj];
-
           }
         }
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
