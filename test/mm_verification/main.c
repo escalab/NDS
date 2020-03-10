@@ -32,6 +32,38 @@ void mm(double *a, double *b, double *c, int n) {
     }  
 }
 
+void sequential_blockmm(double *a, double *b, double *c, double *a_sub, double *b_sub, double *c_sub, int n, int sub_n) {
+    int i, j, k, ii, jj, kk, i_idx, j_idx, k_idx;
+    for(i = 0; i < n; i += sub_n) {
+        for(j = 0; j < n; j += sub_n) {
+            for(k = 0; k < n; k += sub_n) {
+                for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+                    for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                        c_sub[i_idx * sub_n + j_idx] = c[ii * n + jj];
+                    }
+                }
+                for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+                    for (kk = k, k_idx = 0; kk < (k + sub_n); kk++, k_idx++) {
+                        a_sub[i_idx * sub_n + k_idx] = a[ii*n + kk];         
+                    }
+                }
+
+                for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                    for (kk = k, k_idx = 0; kk < (k + sub_n); kk++, k_idx++) {
+                        b_sub[k_idx * sub_n + j_idx] = b[kk * n + jj];
+                    }
+                }
+                blockmm(a_sub, b_sub, c_sub, sub_n, sub_n);
+                for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+                    for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                        c[ii * n + jj] = c_sub[i_idx * sub_n + j_idx];
+                    }
+                }  
+            }              
+        }
+    }  
+}
+
 void submatrix_blockmm(double *a, double *b, double *c, double *a_sub, double *b_sub, double *c_sub, int n, int sub_n) {
     int i, j, k;
     int cross_row = n * sub_n, cross_col = sub_n * sub_n;
@@ -53,7 +85,7 @@ void submatrix_blockmm(double *a, double *b, double *c, double *a_sub, double *b
 int main(int argc, char** argv) {
     int i, j, ii, jj, n, sub_n, count = 0;
     FILE *fptr;
-    double *a, *b, *c;
+    double *a, *b, *c, *c_valid;
     double *a_block, *b_block, *c_block, *c_reformat;
     double *a_sub, *b_sub, *c_sub;
     long duration;
@@ -70,6 +102,7 @@ int main(int argc, char** argv) {
     a = (double *) malloc(n * n * sizeof(double));
     b = (double *) malloc(n * n * sizeof(double));
     c = (double *) malloc(n * n * sizeof(double));
+    c_valid = (double *) malloc(n * n * sizeof(double));
 
     a_block = (double *) malloc(n * n * sizeof(double));
     b_block = (double *) malloc(n * n * sizeof(double));
@@ -85,6 +118,7 @@ int main(int argc, char** argv) {
     count = fread(a, sizeof(double), n * n, fptr);
     if (count != n * n) {
         printf("reading a matrix incorrectly\n");
+#ifdef DEBUG
         printf("A: \n");
         for(i = 0; i < n; i++) {
             for (j = 0; j < n; j++) {
@@ -93,6 +127,7 @@ int main(int argc, char** argv) {
             printf("\n");
         }
         printf("\n");
+#endif
         exit(1);
     }
 
@@ -100,6 +135,7 @@ int main(int argc, char** argv) {
     count = fread(b, sizeof(double), n * n, fptr);
     if (count != n * n) {
         printf("reading a matrix incorrectly\n");
+#ifdef DEBUG
         printf("B: \n");
         for(i = 0; i < n; i++) {
             for (j = 0; j < n; j++) {
@@ -108,21 +144,32 @@ int main(int argc, char** argv) {
             printf("\n");
         }
         printf("\n");
+#endif
         exit(1);
     }
     fclose(fptr);
 
-    memset(c, 0, sizeof(double) * n * n);
+    memset(c_valid, 0, sizeof(double) * n * n);
     gettimeofday(&h_start, NULL);
-    blockmm(a, b, c, n, sub_n);
+    blockmm(a, b, c_valid, n, sub_n);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-    printf("sequential format duration: %f s\n", (float) duration / 1000000);
+    printf("in memory sequential format duration: %f s\n", (float) duration / 1000000);
+
+
+    memset(c, 0, sizeof(double) * n * n);
+    gettimeofday(&h_start, NULL);
+    sequential_blockmm(a, b, c, a_sub, b_sub, c_sub, n, sub_n);
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("external memory sequential format duration: %f s\n", (float) duration / 1000000);
+
 
     fptr = fopen(argv[2], "rb");
     count = fread(a_block, sizeof(double), n * n, fptr);
     if (count != n * n) {
         printf("reading a matrix incorrectly\n");
+#ifdef DEBUG
         printf("A: \n");
         for(i = 0; i < n; i++) {
             for (j = 0; j < n; j++) {
@@ -131,6 +178,7 @@ int main(int argc, char** argv) {
             printf("\n");
         }
         printf("\n");
+#endif
         exit(1);
     }
 
@@ -138,6 +186,7 @@ int main(int argc, char** argv) {
     count = fread(b_block, sizeof(double), n * n, fptr);
     if (count != n * n) {
         printf("reading a matrix incorrectly\n");
+#ifdef DEBUG
         printf("B: \n");
         for(i = 0; i < n; i++) {
             for (j = 0; j < n; j++) {
@@ -146,18 +195,20 @@ int main(int argc, char** argv) {
             printf("\n");
         }
         printf("\n");
+#endif
         exit(1);
     }
     fclose(fptr);
     
     memset(c_block, 0, sizeof(double) * n * n);
     memset(c_sub, 0, sizeof(double) * sub_n * sub_n);
+
     // read the tensor form
     gettimeofday(&h_start, NULL);
     submatrix_blockmm(a_block, b_block, c_block, a_sub, b_sub, c_sub, n, sub_n);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-    printf("tensor format duration: %f s\n", (float) duration / 1000000);
+    printf("external memory in tensor format duration: %f s\n", (float) duration / 1000000);
 
 #ifdef DEBUG
     printf("A: \n");
@@ -179,7 +230,7 @@ int main(int argc, char** argv) {
     printf("C: \n");
     for(i = 0; i < n; i++) {
         for (j = 0; j < n; j++) {
-            printf("%f ", c[i * n + j]);
+            printf("%f ", c_valid[i * n + j]);
         }
         printf("\n");
     }
@@ -212,6 +263,7 @@ int main(int argc, char** argv) {
 #endif
     printf("Reformat from tensor to sequential...\n");
     count = 0;
+    gettimeofday(&h_start, NULL);
     for (i = 0; i < n; i += sub_n) {
         for (j = 0; j < n; j += sub_n) {  
             for(ii = i; ii < i + sub_n; ii++) {
@@ -222,14 +274,27 @@ int main(int argc, char** argv) {
                 }
             }
         }
-    }      
-    printf("Verifying correctness of the computations...\n");
+    }
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("Reformat from tensor to sequential duration: %f s\n", (float) duration / 1000000);  
+   
+    printf("Verifying correctness of external tensor format...\n");
     count = 0;
-    
     for(i = 0; i < n; i++) {
         for (j = 0; j < n; j++) {
-            if (fabs(c[i * n + j] - c_reformat[i * n + j]) > 0.1f) {
-                printf("mismatch at [%d][%d] c=%f c_reformat=%f\n", i, j, c[i * n + j], c_reformat[i * n + j]);
+            if (fabs(c_valid[i * n + j] - c_reformat[i * n + j]) > 0.1f) {
+                printf("mismatch at [%d][%d] c_valid=%f c_reformat=%f\n", i, j, c_valid[i * n + j], c_reformat[i * n + j]);
+                count++;
+            }
+        }
+    }
+
+    printf("Verifying correctness of external sequential format...\n");    
+    for(i = 0; i < n; i++) {
+        for (j = 0; j < n; j++) {
+            if (fabs(c_valid[i * n + j] - c[i * n + j]) > 0.1f) {
+                printf("mismatch at [%d][%d] c_valid=%f c=%f\n", i, j, c_valid[i * n + j], c[i * n + j]);
                 count++;
             }
         }
@@ -242,6 +307,7 @@ int main(int argc, char** argv) {
     free(a);
     free(b);
     free(c);
+    free(c_valid);
     free(a_block);
     free(b_block);
     free(c_block);
