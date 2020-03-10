@@ -4,7 +4,7 @@
 #include <sys/time.h>
 #include <math.h>
 
-void blockmm(double *a, double *b, double *c, int n, int sub_n) {
+void blockmm(double *a, double *b, float *c, int n, int sub_n) {
     int i, j, k, ii, jj, kk;
     for(i = 0; i < n; i+=sub_n) {
         for(j = 0; j < n; j+=sub_n) {
@@ -32,7 +32,7 @@ void mm(double *a, double *b, double *c, int n) {
     }  
 }
 
-void sequential_blockmm(double *a, double *b, double *c, double *a_sub, double *b_sub, double *c_sub, int n, int sub_n) {
+void sequential_blockmm(double *a, double *b, float *c, double *a_sub, double *b_sub, float *c_sub, int n, int sub_n) {
     int i, j, k, ii, jj, kk, i_idx, j_idx, k_idx;
     for(i = 0; i < n; i += sub_n) {
         for(j = 0; j < n; j += sub_n) {
@@ -64,12 +64,12 @@ void sequential_blockmm(double *a, double *b, double *c, double *a_sub, double *
     }  
 }
 
-void submatrix_blockmm(double *a, double *b, double *c, double *a_sub, double *b_sub, double *c_sub, int n, int sub_n) {
+void submatrix_blockmm(double *a, double *b, float *c, double *a_sub, double *b_sub, float *c_sub, int n, int sub_n) {
     int i, j, k;
     int cross_row = n * sub_n, cross_col = sub_n * sub_n;
     for (i = 0; i < (n/sub_n); i++) {
         for (j = 0; j < (n/sub_n); j++) {
-            memcpy(c_sub, (c + i * cross_row + j * cross_col), sub_n * sub_n * sizeof(double));
+            memcpy(c_sub, (c + i * cross_row + j * cross_col), sub_n * sub_n * sizeof(float));
             for (k = 0; k < (n/sub_n); k++) {
                 // fill the block
                 // printf("i: %d, j: %d, k: %d\n", i, j, k);
@@ -77,41 +77,43 @@ void submatrix_blockmm(double *a, double *b, double *c, double *a_sub, double *b
                 memcpy(b_sub, (b + k * cross_row + j * cross_col), sub_n * sub_n * sizeof(double));
                 blockmm(a_sub, b_sub, c_sub, sub_n, sub_n);
             }
-            memcpy((c + i * cross_row + j * cross_col), c_sub, sub_n * sub_n * sizeof(double));
+            memcpy((c + i * cross_row + j * cross_col), c_sub, sub_n * sub_n * sizeof(float));
         }
     }
 }
 
 int main(int argc, char** argv) {
-    int i, j, ii, jj, n, sub_n, count = 0;
+    int i, j, ii, jj, n, sub_n, count = 0, need_output;
     FILE *fptr;
-    double *a, *b, *c, *c_valid;
-    double *a_block, *b_block, *c_block, *c_reformat;
-    double *a_sub, *b_sub, *c_sub;
+    double *a, *b;
+    double *a_block, *b_block;
+    double *a_sub, *b_sub;
+    float *c, *c_valid, *c_block, *c_reformat, *c_sub;
     long duration;
     struct timeval h_start, h_end;
     
-    if (argc < 4) {
-        printf("usage: %s <sequential format path> <tensor format path> <matrix size> <submatrix size>\n", argv[0]);
+    if (argc < 6) {
+        printf("usage: %s <sequential format path> <tensor format path> <matrix size> <submatrix size> <output?>\n", argv[0]);
         return 1;
     }
 
     n = atoi(argv[3]);
     sub_n = atoi(argv[4]);
+    need_output = atoi(argv[5]);
 
     a = (double *) malloc(n * n * sizeof(double));
     b = (double *) malloc(n * n * sizeof(double));
-    c = (double *) malloc(n * n * sizeof(double));
-    c_valid = (double *) malloc(n * n * sizeof(double));
+    c = (float *) malloc(n * n * sizeof(float));
+    c_valid = (float *) malloc(n * n * sizeof(float));
 
     a_block = (double *) malloc(n * n * sizeof(double));
     b_block = (double *) malloc(n * n * sizeof(double));
-    c_block = (double *) malloc(n * n * sizeof(double));
-    c_reformat = (double *) malloc(n * n * sizeof(double));
+    c_block = (float *) malloc(n * n * sizeof(float));
+    c_reformat = (float *) malloc(n * n * sizeof(float));
     
     a_sub = (double *) malloc(sub_n * sub_n * sizeof(double));
     b_sub = (double *) malloc(sub_n * sub_n * sizeof(double));
-    c_sub = (double *) malloc(sub_n * sub_n * sizeof(double));
+    c_sub = (float *) malloc(sub_n * sub_n * sizeof(float));
 
     // read the sequential format
     fptr = fopen(argv[1], "rb");
@@ -149,7 +151,7 @@ int main(int argc, char** argv) {
     }
     fclose(fptr);
 
-    memset(c_valid, 0, sizeof(double) * n * n);
+    memset(c_valid, 0, sizeof(float) * n * n);
     gettimeofday(&h_start, NULL);
     blockmm(a, b, c_valid, n, sub_n);
     gettimeofday(&h_end, NULL);
@@ -157,7 +159,7 @@ int main(int argc, char** argv) {
     printf("in memory sequential format duration: %f s\n", (float) duration / 1000000);
 
 
-    memset(c, 0, sizeof(double) * n * n);
+    memset(c, 0, sizeof(float) * n * n);
     gettimeofday(&h_start, NULL);
     sequential_blockmm(a, b, c, a_sub, b_sub, c_sub, n, sub_n);
     gettimeofday(&h_end, NULL);
@@ -200,8 +202,8 @@ int main(int argc, char** argv) {
     }
     fclose(fptr);
     
-    memset(c_block, 0, sizeof(double) * n * n);
-    memset(c_sub, 0, sizeof(double) * sub_n * sub_n);
+    memset(c_block, 0, sizeof(float) * n * n);
+    memset(c_sub, 0, sizeof(float) * sub_n * sub_n);
 
     // read the tensor form
     gettimeofday(&h_start, NULL);
@@ -302,6 +304,14 @@ int main(int argc, char** argv) {
 
     if (count == 0) {
         printf("test passed\n");
+        if (need_output) {
+            fptr = fopen("answer.bin", "wb");  
+            fwrite(c_valid, sizeof(float), n * n, fptr);  
+            fclose(fptr);
+            fptr = fopen("answer_block.bin", "wb");  
+            fwrite(c_block, sizeof(float), n * n, fptr);  
+            fclose(fptr);
+        }
     }
 
     free(a);
