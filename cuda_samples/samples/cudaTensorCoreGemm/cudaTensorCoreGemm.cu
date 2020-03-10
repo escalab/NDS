@@ -688,28 +688,35 @@ int main(int argc, char **argv) {
   printf("\n");
 
   double *A_double = NULL;
+  double *A_double_d = NULL;
   half *A = NULL;
   double *B_double = NULL;
+  double *B_double_d = NULL;
   half *B = NULL;
   float *C = NULL;
+  float *C_d = NULL;
   float *D = NULL;
 
-  checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A_double),
+  A_double = (double *)malloc(sizeof(double) * WMMA_M * WMMA_K);
+  B_double = (double *)malloc(sizeof(double) * WMMA_K * WMMA_N);
+  C = (float *)malloc(sizeof(float) * WMMA_M * WMMA_N);
+
+  checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A_double_d),
                              sizeof(double) * WMMA_M * WMMA_K));  
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A),
                              sizeof(half) * WMMA_M * WMMA_K));
-  checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&B_double),
+  checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&B_double_d),
                              sizeof(double) * WMMA_M * WMMA_K));  
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&B),
                              sizeof(half) * WMMA_N * WMMA_K));
-  checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&C),
+  checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&C_d),
                              sizeof(float) * WMMA_M * WMMA_N));
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&D),
                              sizeof(float) * WMMA_M * WMMA_N));
 
   assert(((unsigned long long)A) % 128 == 0);
   assert(((unsigned long long)B) % 128 == 0);
-  assert(((unsigned long long)C) % 128 == 0);
+  assert(((unsigned long long)C_d) % 128 == 0);
   assert(((unsigned long long)D) % 128 == 0);
 
 
@@ -721,7 +728,7 @@ int main(int argc, char **argv) {
   //                            cudaMemcpyHostToDevice));
   // checkCudaErrors(cudaMemcpy(C, C_h, sizeof(float) * WMMA_M * WMMA_N,
   //                            cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMemset(C, 0, sizeof(float) * WMMA_M * WMMA_N));
+  checkCudaErrors(cudaMemset(C_d, 0, sizeof(float) * WMMA_M * WMMA_N));
 
   checkCudaErrors(cudaEventRecord(start));
   // custom block gemm
@@ -731,36 +738,37 @@ int main(int argc, char **argv) {
         // fill the block
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            checkCudaErrors(cudaMemcpy((C + i_idx * WMMA_N + j_idx), (C_h + ii * N_GLOBAL + jj), sizeof(float),
-              cudaMemcpyHostToDevice));
+            C[i_idx * WMMA_N + j_idx] = C_h[ii * N_GLOBAL + jj];
+
           }
         }
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-            checkCudaErrors(cudaMemcpy((A_double + i_idx * WMMA_K + k_idx), (A_h + ii*K_GLOBAL + kk), sizeof(double),
-            cudaMemcpyHostToDevice));          
+            A_double[i_idx * WMMA_K + k_idx] = A_h[ii*K_GLOBAL + kk];         
           }
         }
 
         for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
           for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-            checkCudaErrors(cudaMemcpy((B_double + k_idx * WMMA_N + j_idx), (B_h + kk * N_GLOBAL + jj), sizeof(double),
-            cudaMemcpyHostToDevice));
+            B_double[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];
           }
         }
 
-        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
-        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
-        tensorOp<<<1, 32>>>(A, B, C);
+        checkCudaErrors(cudaMemcpy(C_d, C, WMMA_M * WMMA_N * sizeof(float), cudaMemcpyHostToDevice));
+        checkCudaErrors(cudaMemcpy(A_double_d, A_double, WMMA_M * WMMA_K * sizeof(double), cudaMemcpyHostToDevice));
+        checkCudaErrors(cudaMemcpy(B_double_d, B_double, WMMA_K * WMMA_N * sizeof(double), cudaMemcpyHostToDevice));
+
+        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double_d, A, dsize);
+        half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double_d, B, dsize);
+        tensorOp<<<1, 32>>>(A, B, C_d);
+
+        checkCudaErrors(cudaMemcpy(C, C_d, WMMA_M * WMMA_N * sizeof(float), cudaMemcpyDeviceToHost));
 
         for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
           for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            checkCudaErrors(cudaMemcpy((C_h + ii * N_GLOBAL + jj), (C + i_idx * WMMA_N + j_idx), sizeof(float), cudaMemcpyDeviceToHost));
-            // printf("%f ", C_h[ii*N_GLOBAL+jj]);
+            C_h[ii * N_GLOBAL + jj] = C[i_idx * WMMA_N + j_idx];
           }
-          // printf("\n");
         }
-        // printf("\n");
       }
     }
   }
@@ -834,11 +842,14 @@ int main(int argc, char **argv) {
   free(A_h);
   free(B_h);
   free(C_h);
-  checkCudaErrors(cudaFree(reinterpret_cast<void *>(A_double)));
+  free(A_double);
+  free(B_double);
+  free(C);
+  checkCudaErrors(cudaFree(reinterpret_cast<void *>(A_double_d)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(A)));
-  checkCudaErrors(cudaFree(reinterpret_cast<void *>(B_double)));
+  checkCudaErrors(cudaFree(reinterpret_cast<void *>(B_double_d)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(B)));
-  checkCudaErrors(cudaFree(reinterpret_cast<void *>(C)));
+  checkCudaErrors(cudaFree(reinterpret_cast<void *>(C_d)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(D)));
 
   return 0;
