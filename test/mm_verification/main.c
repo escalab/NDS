@@ -34,13 +34,13 @@ void mm(double *a, double *b, double *c, int n) {
 
 void submatrix_blockmm(double *a, double *b, double *c, double *a_sub, double *b_sub, double *c_sub, int n, int sub_n) {
     int i, j, k;
-    int cross_row = sub_n * sub_n * sub_n, cross_col = sub_n * sub_n;
+    int cross_row = n * sub_n, cross_col = sub_n * sub_n;
     for (i = 0; i < (n/sub_n); i++) {
         for (j = 0; j < (n/sub_n); j++) {
             memcpy(c_sub, (c + i * cross_row + j * cross_col), sub_n * sub_n * sizeof(double));
             for (k = 0; k < (n/sub_n); k++) {
                 // fill the block
-                printf("i: %d, j: %d, k: %d\n", i, j, k);
+                // printf("i: %d, j: %d, k: %d\n", i, j, k);
                 memcpy(a_sub, (a + i * cross_row + k * cross_col), sub_n * sub_n * sizeof(double));
                 memcpy(b_sub, (b + k * cross_row + j * cross_col), sub_n * sub_n * sizeof(double));
                 blockmm(a_sub, b_sub, c_sub, sub_n, sub_n);
@@ -216,8 +216,8 @@ int main(int argc, char** argv) {
         for (j = 0; j < n; j += sub_n) {  
             for(ii = i; ii < i + sub_n; ii++) {
                 for(jj = j; jj < j + sub_n; jj++) {
-                    c_reformat[count] = c_block[ii * n + jj];
-                    printf("ii: %d, jj: %d\n", ii, jj);
+                    c_reformat[ii * n + jj] = c_block[count];
+                    // printf("ii: %d, jj: %d\n", ii, jj);
                     count++;
                 }
             }
