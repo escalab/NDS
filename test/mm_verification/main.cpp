@@ -3,6 +3,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include <math.h>
+#include "half.hpp"
 
 void blockmm(double *a, double *b, float *c, int n, int sub_n) {
     int i, j, k, ii, jj, kk;
@@ -21,13 +22,51 @@ void blockmm(double *a, double *b, float *c, int n, int sub_n) {
     }  
 }
 
-void mm(double *a, double *b, double *c, int n) {
-    int i, j, k;
-    for(i = 0; i < n; i++) {
-        for(j = 0; j < n; j++) {
-            for(k = 0; k < n; k++) {  
-                c[i * n + j] += a[i * n + k] * b[k * n + j];      
+void blockmm(half_float::half *a, half_float::half *b, float *c, int n, int sub_n) {
+    int i, j, k, ii, jj, kk;
+    for(i = 0; i < n; i+=sub_n) {
+        for(j = 0; j < n; j+=sub_n) {
+            for(k = 0; k < n; k+=sub_n) {        
+                for(ii = i; ii < i+sub_n; ii++) {
+                    for(jj = j; jj < j+sub_n; jj++) {
+                        for(kk = k; kk < k+sub_n; kk++) {
+                            c[ii * n + jj] += float(a[ii * n + kk] * b[kk * n + jj]);
+                        }
+                    }
+                }
             }
+        }
+    }  
+}
+
+void sequential_blockmm(half_float::half *a, half_float::half *b, float *c, half_float::half *a_sub, half_float::half *b_sub, float *c_sub, int n, int sub_n) {
+    int i, j, k, ii, jj, kk, i_idx, j_idx, k_idx;
+    for(i = 0; i < n; i += sub_n) {
+        for(j = 0; j < n; j += sub_n) {
+            for(k = 0; k < n; k += sub_n) {
+                for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+                    for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                        c_sub[i_idx * sub_n + j_idx] = c[ii * n + jj];
+                    }
+                }
+                for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+                    for (kk = k, k_idx = 0; kk < (k + sub_n); kk++, k_idx++) {
+                        a_sub[i_idx * sub_n + k_idx] = a[ii*n + kk];         
+                    }
+                }
+
+                for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                    for (kk = k, k_idx = 0; kk < (k + sub_n); kk++, k_idx++) {
+                        b_sub[k_idx * sub_n + j_idx] = b[kk * n + jj];
+                    }
+                }
+                blockmm(a_sub, b_sub, c_sub, sub_n, sub_n);
+                for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+                    for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                        c[ii * n + jj] = c_sub[i_idx * sub_n + j_idx];
+                    }
+                }  
+            }              
         }
     }  
 }
@@ -64,6 +103,24 @@ void sequential_blockmm(double *a, double *b, float *c, double *a_sub, double *b
     }  
 }
 
+void submatrix_blockmm(half_float::half *a, half_float::half *b, float *c, half_float::half *a_sub, half_float::half *b_sub, float *c_sub, int n, int sub_n) {
+    int i, j, k;
+    int cross_row = n * sub_n, cross_col = sub_n * sub_n;
+    for (i = 0; i < (n/sub_n); i++) {
+        for (j = 0; j < (n/sub_n); j++) {
+            memcpy(c_sub, (c + i * cross_row + j * cross_col), sub_n * sub_n * sizeof(float));
+            for (k = 0; k < (n/sub_n); k++) {
+                // fill the block
+                // printf("i: %d, j: %d, k: %d\n", i, j, k);
+                memcpy(a_sub, (a + i * cross_row + k * cross_col), sub_n * sub_n * sizeof(half_float::half));
+                memcpy(b_sub, (b + k * cross_row + j * cross_col), sub_n * sub_n * sizeof(half_float::half));
+                blockmm(a_sub, b_sub, c_sub, sub_n, sub_n);
+            }
+            memcpy((c + i * cross_row + j * cross_col), c_sub, sub_n * sub_n * sizeof(float));
+        }
+    }
+}
+
 void submatrix_blockmm(double *a, double *b, float *c, double *a_sub, double *b_sub, float *c_sub, int n, int sub_n) {
     int i, j, k;
     int cross_row = n * sub_n, cross_col = sub_n * sub_n;
@@ -85,9 +142,10 @@ void submatrix_blockmm(double *a, double *b, float *c, double *a_sub, double *b_
 int main(int argc, char** argv) {
     int i, j, ii, jj, n, sub_n, count = 0, need_output;
     FILE *fptr;
-    double *a, *b;
-    double *a_block, *b_block;
-    double *a_sub, *b_sub;
+    double *tmp_arr;
+    half_float::half *a, *b;
+    half_float::half *a_block, *b_block;
+    half_float::half *a_sub, *b_sub;
     float *c, *c_valid, *c_block, *c_reformat, *c_sub;
     long duration;
     struct timeval h_start, h_end;
@@ -101,23 +159,25 @@ int main(int argc, char** argv) {
     sub_n = atoi(argv[4]);
     need_output = atoi(argv[5]);
 
-    a = (double *) malloc(n * n * sizeof(double));
-    b = (double *) malloc(n * n * sizeof(double));
+    tmp_arr = (double *) malloc(n * n * sizeof(double));
+
+    a = (half_float::half *) malloc(n * n * sizeof(half_float::half));
+    b = (half_float::half *) malloc(n * n * sizeof(half_float::half));
     c = (float *) malloc(n * n * sizeof(float));
     c_valid = (float *) malloc(n * n * sizeof(float));
 
-    a_block = (double *) malloc(n * n * sizeof(double));
-    b_block = (double *) malloc(n * n * sizeof(double));
+    a_block = (half_float::half *) malloc(n * n * sizeof(half_float::half));
+    b_block = (half_float::half *) malloc(n * n * sizeof(half_float::half));
     c_block = (float *) malloc(n * n * sizeof(float));
     c_reformat = (float *) malloc(n * n * sizeof(float));
     
-    a_sub = (double *) malloc(sub_n * sub_n * sizeof(double));
-    b_sub = (double *) malloc(sub_n * sub_n * sizeof(double));
+    a_sub = (half_float::half *) malloc(sub_n * sub_n * sizeof(half_float::half));
+    b_sub = (half_float::half *) malloc(sub_n * sub_n * sizeof(half_float::half));
     c_sub = (float *) malloc(sub_n * sub_n * sizeof(float));
 
     // read the sequential format
     fptr = fopen(argv[1], "rb");
-    count = fread(a, sizeof(double), n * n, fptr);
+    count = fread(tmp_arr, sizeof(double), n * n, fptr);
     if (count != n * n) {
         printf("reading a matrix incorrectly\n");
 #ifdef DEBUG
@@ -132,9 +192,12 @@ int main(int argc, char** argv) {
 #endif
         exit(1);
     }
-
     fseek(fptr, 0, SEEK_SET);
-    count = fread(b, sizeof(double), n * n, fptr);
+    for (i = 0; i < n * n; i++) {
+        a[i] = half_float::half(tmp_arr[i]);
+    }
+
+    count = fread(tmp_arr, sizeof(double), n * n, fptr);
     if (count != n * n) {
         printf("reading a matrix incorrectly\n");
 #ifdef DEBUG
@@ -150,6 +213,9 @@ int main(int argc, char** argv) {
         exit(1);
     }
     fclose(fptr);
+    for (i = 0; i < n * n; i++) {
+        b[i] = half_float::half(tmp_arr[i]);
+    }
 
     memset(c_valid, 0, sizeof(float) * n * n);
     gettimeofday(&h_start, NULL);
@@ -168,7 +234,7 @@ int main(int argc, char** argv) {
 
 
     fptr = fopen(argv[2], "rb");
-    count = fread(a_block, sizeof(double), n * n, fptr);
+    count = fread(tmp_arr, sizeof(double), n * n, fptr);
     if (count != n * n) {
         printf("reading a matrix incorrectly\n");
 #ifdef DEBUG
@@ -183,9 +249,12 @@ int main(int argc, char** argv) {
 #endif
         exit(1);
     }
+    for (i = 0; i < n * n; i++) {
+        a_block[i] = half_float::half(tmp_arr[i]);
+    }
 
     fseek(fptr, 0, SEEK_SET);
-    count = fread(b_block, sizeof(double), n * n, fptr);
+    count = fread(tmp_arr, sizeof(double), n * n, fptr);
     if (count != n * n) {
         printf("reading a matrix incorrectly\n");
 #ifdef DEBUG
@@ -202,6 +271,9 @@ int main(int argc, char** argv) {
     }
     fclose(fptr);
     
+    for (i = 0; i < n * n; i++) {
+        b_block[i] = half_float::half(tmp_arr[i]);
+    }
     memset(c_block, 0, sizeof(float) * n * n);
     memset(c_sub, 0, sizeof(float) * sub_n * sub_n);
 
@@ -306,7 +378,7 @@ int main(int argc, char** argv) {
         printf("test passed\n");
         if (need_output) {
             fptr = fopen("answer.bin", "wb");  
-            fwrite(c_valid, sizeof(float), n * n, fptr);  
+            fwrite(c_reformat, sizeof(float), n * n, fptr);  
             fclose(fptr);
             fptr = fopen("answer_block.bin", "wb");  
             fwrite(c_block, sizeof(float), n * n, fptr);  

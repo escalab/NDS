@@ -1,4 +1,4 @@
-CC=gcc
+CC=g++
 CFLAGS=-O3
 
 ifeq ($(debug),1)
@@ -7,7 +7,7 @@ endif
 
 all: main
 
-main: main.c
+main: main.cpp
 	$(CC) $(CFLAGS) -o $@ $< 
 
 clean:
