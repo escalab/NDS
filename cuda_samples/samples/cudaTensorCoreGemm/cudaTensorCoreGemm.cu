@@ -76,7 +76,7 @@
 
 #ifndef CPU_DEBUG
 // Set this to 1 to verify the correctness of the GPU-computed matrix.
-#define CPU_DEBUG 1
+#define CPU_DEBUG 0
 #endif
 
 #ifndef SHARED_MEMORY_LIMIT_64K
@@ -91,10 +91,9 @@
 #define WARP_SIZE 32
 
 // MMA matrix tile dimensions.
-
-#define M 16 * 4
-#define N 16 * 4
-#define K 16 * 4
+#define M 512
+#define N 512
+#define K 512
 
 #define WMMA_M 16
 #define WMMA_N 16
@@ -224,8 +223,8 @@ __global__ void tensorOp(half *a, half *b, float *c) {
   // Tile using a 2D grid
   // int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // [0, 1]
   // int warpN = (blockIdx.y * blockDim.y + threadIdx.y); // [0, 1]
-  int warpM = threadIdx.x / warpSize; // [0, 1]
-  int warpN = threadIdx.y; // [0, 1]
+  int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+  int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
   int cRow = warpM * WMMA_M;
   int cCol = warpN * WMMA_N;
   // printf("warpM: %d, warpN: %d\n", warpM, warpN);
@@ -593,7 +592,7 @@ int main(int argc, char **argv) {
   int i_idx, j_idx, k_idx;
   size_t dsize = M * K;
 
-  // dim3 gridDim;
+  dim3 gridDim;
   dim3 blockDim;
 
   printf("Initializing...\n");
@@ -616,9 +615,9 @@ int main(int argc, char **argv) {
   N_GLOBAL = atoi(argv[3]);
   K_GLOBAL = atoi(argv[4]);
 
-  M_TILES = M_GLOBAL / M;
-  N_TILES = N_GLOBAL / N;
-  K_TILES = K_GLOBAL / K;
+  M_TILES = M_GLOBAL / M / WMMA_M;
+  N_TILES = N_GLOBAL / N / WMMA_N;
+  K_TILES = K_GLOBAL / K / WMMA_K;
   int dev = findCudaDevice(argc, (const char **)argv);
 
   cudaDeviceProp deviceProp;
@@ -630,11 +629,12 @@ int main(int argc, char **argv) {
   // blockDim.x = 128;
   // blockDim.y = 4;
 
+  // for RTX 2080, we have 1024 threads per block.
   blockDim.y = 4;
-  blockDim.x = deviceProp.warpSize * blockDim.y;
-  // gridDim.x = (M_GLOBAL + (WMMA_M * blockDim.x / deviceProp.warpSize - 1)) /
-  //             (WMMA_M * blockDim.x / deviceProp.warpSize);
-  // gridDim.y = (N_GLOBAL + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
+  blockDim.x = 128; // deviceProp.warpSize * blockDim.y;
+  gridDim.x = (M_GLOBAL + (M * blockDim.x / deviceProp.warpSize - 1)) /
+              (M * blockDim.x / deviceProp.warpSize);
+  gridDim.y = (N_GLOBAL + N * blockDim.y - 1) / (N * blockDim.y);
 
   checkCudaErrors(cudaEventCreate(&start));
   checkCudaErrors(cudaEventCreate(&stop));
@@ -648,9 +648,9 @@ int main(int argc, char **argv) {
   }
 
 
-  printf("M: %d (%d x %d)\n", M_GLOBAL, M, M_TILES);
-  printf("N: %d (%d x %d)\n", N_GLOBAL, N, N_TILES);
-  printf("K: %d (%d x %d)\n", K_GLOBAL, K, K_TILES);
+  printf("M: %d (%d x %d x %d)\n", M_GLOBAL, M, WMMA_M, M_TILES);
+  printf("N: %d (%d x %d x %d)\n", N_GLOBAL, N, WMMA_N, N_TILES);
+  printf("K: %d (%d x %d x %d)\n", K_GLOBAL, K, WMMA_K, K_TILES);
 
   double *A_h = NULL;
   double *B_h = NULL;
@@ -793,7 +793,7 @@ int main(int argc, char **argv) {
 
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double_d, A, dsize);
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double_d, B, dsize);
-        tensorOp<<<1, blockDim>>>(A, B, C_d);
+        tensorOp<<<gridDim, blockDim>>>(A, B, C_d);
 
         checkCudaErrors(cudaMemcpy(C, C_d, M * N * sizeof(float), cudaMemcpyDeviceToHost));
 
