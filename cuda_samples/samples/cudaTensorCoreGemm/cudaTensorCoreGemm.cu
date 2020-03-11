@@ -92,9 +92,9 @@
 
 // MMA matrix tile dimensions.
 
-#define M 16
-#define N 16
-#define K 16
+#define M 16 * 4
+#define N 16 * 4
+#define K 16 * 4
 
 #define WMMA_M 16
 #define WMMA_N 16
@@ -221,21 +221,39 @@ __global__ void half_conversion_kernel(double *din, half *dout, int dsize) {
 // Calculate AB with NVIDIA TensorCores
 // Kernel executed by 1 Warp (32 Threads)
 __global__ void tensorOp(half *a, half *b, float *c) {
+  // Tile using a 2D grid
+  // int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // [0, 1]
+  // int warpN = (blockIdx.y * blockDim.y + threadIdx.y); // [0, 1]
+  int warpM = threadIdx.x / warpSize; // [0, 1]
+  int warpN = threadIdx.y; // [0, 1]
+  int cRow = warpM * WMMA_M;
+  int cCol = warpN * WMMA_N;
+  // printf("warpM: %d, warpN: %d\n", warpM, warpN);
   // Declare the fragments
   wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
   wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
   wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
-  
-  // 3. Load the inputs into the fragments
-  nvcuda::wmma::load_matrix_sync(a_frag, a, WMMA_M);
-  nvcuda::wmma::load_matrix_sync(b_frag, b, WMMA_K);
-  nvcuda::wmma::load_matrix_sync(c_frag, c, WMMA_N, wmma::mem_row_major);
+  nvcuda::wmma::load_matrix_sync(c_frag, c + cRow * N + cCol, N, wmma::mem_row_major);
 
-  // 4. Perform the matrix multiplication
-  nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+  // Loop over k
+  for (int i = 0; i < K; i += WMMA_K) {
+    int aRow = warpM * WMMA_M;
+    int aCol = i;
+    int bCol = warpN * WMMA_N;
+    int bRow = i;
 
+    // Bounds checking
+    if (aRow < M && aCol < K && bRow < K && bCol < N) {
+      // Load the inputs
+      wmma::load_matrix_sync(a_frag, a + aCol + aRow * M, M);
+      wmma::load_matrix_sync(b_frag, b + bCol + bRow * K, K);
+
+      // 4. Perform the matrix multiplication
+      nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+    }
+  }
   // 5. Store the result from fragment to global
-  nvcuda::wmma::store_matrix_sync(c, c_frag, WMMA_N, nvcuda::wmma::mem_row_major);
+  nvcuda::wmma::store_matrix_sync(c + cRow * N + cCol, c_frag, N, nvcuda::wmma::mem_row_major);
 }
 
 // too complicated and use too many macros to ignore this first
@@ -546,12 +564,12 @@ __host__ void matMultiplyOnHost(double *A, double *B, float *C, float alpha,
 __host__ void blockMatMultiplyOnHost(double *A, double *B, float *C, float alpha,
   float beta, int numARows, int numAColumns, int numBRows, int numBColumns, int numCRows, int numCColumns) {
   int i, j, k, ii, jj, kk;
-  for (i = 0; i < numCRows; i += WMMA_M) {
-    for (j = 0; j < numCColumns; j += WMMA_N) {
-      for (k = 0; k < numAColumns; k += WMMA_K) {
-        for (ii = i; ii < (i + WMMA_M); ii++) {
-          for (jj = j; jj < (j + WMMA_N); jj++) {
-            for (kk = k; kk < (k + WMMA_K); kk++) {
+  for (i = 0; i < numCRows; i += M) {
+    for (j = 0; j < numCColumns; j += N) {
+      for (k = 0; k < numAColumns; k += K) {
+        for (ii = i; ii < (i + M); ii++) {
+          for (jj = j; jj < (j + N); jj++) {
+            for (kk = k; kk < (k + K); kk++) {
               C[ii * numCColumns + jj] += A[ii * numAColumns + kk] * B[kk * numBColumns + jj];
             }
           }
@@ -573,7 +591,10 @@ int main(int argc, char **argv) {
 
   int i, j, k, ii, jj, kk;
   int i_idx, j_idx, k_idx;
-  size_t dsize = WMMA_M * WMMA_K;
+  size_t dsize = M * K;
+
+  // dim3 gridDim;
+  dim3 blockDim;
 
   printf("Initializing...\n");
 
@@ -598,14 +619,25 @@ int main(int argc, char **argv) {
   M_TILES = M_GLOBAL / M;
   N_TILES = N_GLOBAL / N;
   K_TILES = K_GLOBAL / K;
-
-  checkCudaErrors(cudaEventCreate(&start));
-  checkCudaErrors(cudaEventCreate(&stop));
-
   int dev = findCudaDevice(argc, (const char **)argv);
 
   cudaDeviceProp deviceProp;
   checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
+  printf("The warp size is %d.\n", deviceProp.warpSize);
+
+  // blockDim.x must be a multple of warpSize
+  // 128x4 means we have 16 warps and a block computes a 64x64 output tile
+  // blockDim.x = 128;
+  // blockDim.y = 4;
+
+  blockDim.y = 4;
+  blockDim.x = deviceProp.warpSize * blockDim.y;
+  // gridDim.x = (M_GLOBAL + (WMMA_M * blockDim.x / deviceProp.warpSize - 1)) /
+  //             (WMMA_M * blockDim.x / deviceProp.warpSize);
+  // gridDim.y = (N_GLOBAL + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
+
+  checkCudaErrors(cudaEventCreate(&start));
+  checkCudaErrors(cudaEventCreate(&stop));
 
   // Tensor cores require a GPU of Volta (SM7X) architecture or higher.
   if (deviceProp.major < 7) {
@@ -615,7 +647,6 @@ int main(int argc, char **argv) {
     exit(EXIT_WAIVED);
   }
 
-  printf("The warp size is %d.\n", deviceProp.warpSize);
 
   printf("M: %d (%d x %d)\n", M_GLOBAL, M, M_TILES);
   printf("N: %d (%d x %d)\n", N_GLOBAL, N, N_TILES);
@@ -636,9 +667,9 @@ int main(int argc, char **argv) {
   float *result_host = NULL;
   float *answer = NULL;
 
-  A_submatrix_h = (double *)malloc(sizeof(double) * WMMA_M * WMMA_K);
-  B_submatrix_h = (double *)malloc(sizeof(double) * WMMA_K * WMMA_N);
-  C_submatrix_h = (float *)malloc(sizeof(float) * WMMA_M * WMMA_N);
+  A_submatrix_h = (double *)malloc(sizeof(double) * M * K);
+  B_submatrix_h = (double *)malloc(sizeof(double) * K * N);
+  C_submatrix_h = (float *)malloc(sizeof(float) * M * N);
   result_host = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
   answer = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
   memset(result_host, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
@@ -700,22 +731,22 @@ int main(int argc, char **argv) {
   float *C_d = NULL;
   float *D = NULL;
 
-  A_double = (double *)malloc(sizeof(double) * WMMA_M * WMMA_K);
-  B_double = (double *)malloc(sizeof(double) * WMMA_K * WMMA_N);
-  C = (float *)malloc(sizeof(float) * WMMA_M * WMMA_N);
+  A_double = (double *)malloc(sizeof(double) * M * K);
+  B_double = (double *)malloc(sizeof(double) * K * N);
+  C = (float *)malloc(sizeof(float) * M * N);
 
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A_double_d),
-                             sizeof(double) * WMMA_M * WMMA_K));  
+                             sizeof(double) * M * K));  
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A),
-                             sizeof(half) * WMMA_M * WMMA_K));
+                             sizeof(half) * M * K));
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&B_double_d),
-                             sizeof(double) * WMMA_M * WMMA_K));  
+                             sizeof(double) * M * K));  
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&B),
-                             sizeof(half) * WMMA_N * WMMA_K));
+                             sizeof(half) * N * K));
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&C_d),
-                             sizeof(float) * WMMA_M * WMMA_N));
+                             sizeof(float) * M * N));
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&D),
-                             sizeof(float) * WMMA_M * WMMA_N));
+                             sizeof(float) * M * N));
 
   assert(((unsigned long long)A) % 128 == 0);
   assert(((unsigned long long)B) % 128 == 0);
@@ -731,44 +762,44 @@ int main(int argc, char **argv) {
   //                            cudaMemcpyHostToDevice));
   // checkCudaErrors(cudaMemcpy(C, C_h, sizeof(float) * WMMA_M * WMMA_N,
   //                            cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMemset(C_d, 0, sizeof(float) * WMMA_M * WMMA_N));
+  checkCudaErrors(cudaMemset(C_d, 0, sizeof(float) * M * N));
 
   checkCudaErrors(cudaEventRecord(start));
   // custom block gemm
-  for (i = 0; i < M_GLOBAL; i += WMMA_M) {
-    for (j = 0; j < N_GLOBAL; j += WMMA_N) {
-      for (k = 0; k < K_GLOBAL; k += WMMA_K) {
+  for (i = 0; i < M_GLOBAL; i += M) {
+    for (j = 0; j < N_GLOBAL; j += N) {
+      for (k = 0; k < K_GLOBAL; k += K) {
         // fill the block
-        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
-          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            C[i_idx * WMMA_N + j_idx] = C_h[ii * N_GLOBAL + jj];
+        for (ii = i, i_idx = 0; ii < (i + M); ii++, i_idx++) {
+          for (jj = j, j_idx = 0; jj < (j + N); jj++, j_idx++) {
+            C[i_idx * N + j_idx] = C_h[ii * N_GLOBAL + jj];
           }
         }
-        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
-          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-            A_double[i_idx * WMMA_K + k_idx] = A_h[ii*K_GLOBAL + kk];         
-          }
-        }
-
-        for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-            B_double[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];
+        for (ii = i, i_idx = 0; ii < (i + M); ii++, i_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + K); kk++, k_idx++) {
+            A_double[i_idx * K + k_idx] = A_h[ii*K_GLOBAL + kk];         
           }
         }
 
-        checkCudaErrors(cudaMemcpy(C_d, C, WMMA_M * WMMA_N * sizeof(float), cudaMemcpyHostToDevice));
-        checkCudaErrors(cudaMemcpy(A_double_d, A_double, WMMA_M * WMMA_K * sizeof(double), cudaMemcpyHostToDevice));
-        checkCudaErrors(cudaMemcpy(B_double_d, B_double, WMMA_K * WMMA_N * sizeof(double), cudaMemcpyHostToDevice));
+        for (jj = j, j_idx = 0; jj < (j + N); jj++, j_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + K); kk++, k_idx++) {
+            B_double[k_idx * N + j_idx] = B_h[kk * N_GLOBAL + jj];
+          }
+        }
+
+        checkCudaErrors(cudaMemcpy(C_d, C, M * N * sizeof(float), cudaMemcpyHostToDevice));
+        checkCudaErrors(cudaMemcpy(A_double_d, A_double, M * K * sizeof(double), cudaMemcpyHostToDevice));
+        checkCudaErrors(cudaMemcpy(B_double_d, B_double, K * N * sizeof(double), cudaMemcpyHostToDevice));
 
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double_d, A, dsize);
         half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double_d, B, dsize);
-        tensorOp<<<1, 32>>>(A, B, C_d);
+        tensorOp<<<1, blockDim>>>(A, B, C_d);
 
-        checkCudaErrors(cudaMemcpy(C, C_d, WMMA_M * WMMA_N * sizeof(float), cudaMemcpyDeviceToHost));
+        checkCudaErrors(cudaMemcpy(C, C_d, M * N * sizeof(float), cudaMemcpyDeviceToHost));
 
-        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
-          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            C_h[ii * N_GLOBAL + jj] = C[i_idx * WMMA_N + j_idx];
+        for (ii = i, i_idx = 0; ii < (i + M); ii++, i_idx++) {
+          for (jj = j, j_idx = 0; jj < (j + N); jj++, j_idx++) {
+            C_h[ii * N_GLOBAL + jj] = C[i_idx * N + j_idx];
           }
         }
       }
@@ -791,31 +822,30 @@ int main(int argc, char **argv) {
   // blockMatMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
   //   K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
   // custom block gemm
-  for (i = 0; i < M_GLOBAL; i += WMMA_M) {
-    for (j = 0; j < N_GLOBAL; j += WMMA_N) {
-      for (k = 0; k < K_GLOBAL; k += WMMA_K) {
+  for (i = 0; i < M_GLOBAL; i += M) {
+    for (j = 0; j < N_GLOBAL; j += N) {
+      for (k = 0; k < K_GLOBAL; k += K) {
         // fill the block
-        // fill the block
-        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
-          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            C_submatrix_h[i_idx * WMMA_N + j_idx] = result_host[ii * N_GLOBAL + jj];
+        for (ii = i, i_idx = 0; ii < (i + M); ii++, i_idx++) {
+          for (jj = j, j_idx = 0; jj < (j + N); jj++, j_idx++) {
+            C_submatrix_h[i_idx * N + j_idx] = result_host[ii * N_GLOBAL + jj];
           }
         }
-        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
-          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-            A_submatrix_h[i_idx * WMMA_K + k_idx] = A_h[ii*K_GLOBAL + kk];         
+        for (ii = i, i_idx = 0; ii < (i + M); ii++, i_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + K); kk++, k_idx++) {
+            A_submatrix_h[i_idx * K + k_idx] = A_h[ii*K_GLOBAL + kk];         
           }
         }
 
-        for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-          for (kk = k, k_idx = 0; kk < (k + WMMA_K); kk++, k_idx++) {
-            B_submatrix_h[k_idx * WMMA_N + j_idx] = B_h[kk * N_GLOBAL + jj];
+        for (jj = j, j_idx = 0; jj < (j + N); jj++, j_idx++) {
+          for (kk = k, k_idx = 0; kk < (k + K); kk++, k_idx++) {
+            B_submatrix_h[k_idx * N + j_idx] = B_h[kk * N_GLOBAL + jj];
           }
         }
-        blockMatMultiplyOnHost(A_submatrix_h, B_submatrix_h, C_submatrix_h, alpha, beta, WMMA_M, WMMA_K, WMMA_K, WMMA_N, WMMA_M, WMMA_N);
-        for (ii = i, i_idx = 0; ii < (i + WMMA_M); ii++, i_idx++) {
-          for (jj = j, j_idx = 0; jj < (j + WMMA_N); jj++, j_idx++) {
-            result_host[ii * N_GLOBAL + jj] = C_submatrix_h[i_idx * WMMA_N + j_idx];
+        blockMatMultiplyOnHost(A_submatrix_h, B_submatrix_h, C_submatrix_h, alpha, beta, M, K, K, N, M, N);
+        for (ii = i, i_idx = 0; ii < (i + M); ii++, i_idx++) {
+          for (jj = j, j_idx = 0; jj < (j + N); jj++, j_idx++) {
+            result_host[ii * N_GLOBAL + jj] = C_submatrix_h[i_idx * N + j_idx];
           }
         }
       }
