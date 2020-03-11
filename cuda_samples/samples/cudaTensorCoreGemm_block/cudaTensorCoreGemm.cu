@@ -76,7 +76,7 @@
 
 #ifndef CPU_DEBUG
 // Set this to 1 to verify the correctness of the GPU-computed matrix.
-#define CPU_DEBUG 1
+#define CPU_DEBUG 0
 #endif
 
 #ifndef SHARED_MEMORY_LIMIT_64K
@@ -571,25 +571,29 @@ int main(int argc, char **argv) {
   cudaEvent_t start, stop;
   FILE *fp;
 
-  int i, j, k, ii, jj, kk;
-  int i_idx, j_idx, k_idx;
-  int submatrix_size;
+  int i, j, k;
   size_t dsize = WMMA_M * WMMA_K;
 
   printf("Initializing...\n");
 
-  if (argc < 4) {
-    printf("usage: %s <A_matrix_path> <m_global> <n_global> <k_global> <submatrix size>\n", argv[0]);
+
+#if CPU_DEBUG
+  if (argc < 6) {
+    printf("usage: %s <A_matrix_path> <m_global> <n_global> <k_global> <answer_path>\n", argv[0]);
     exit(1);
   }
+#else
+  if (argc < 5) {
+    printf("usage: %s <A_matrix_path> <m_global> <n_global> <k_global>\n", argv[0]);
+    exit(1);
+  }
+#endif
 
   // GEMM configuration.
   fp = fopen(argv[1], "rb");
-
   M_GLOBAL = atoi(argv[2]);
   N_GLOBAL = atoi(argv[3]);
   K_GLOBAL = atoi(argv[4]);
-  // submatrix_size = atoi(argv[5]);
 
   M_TILES = M_GLOBAL / M;
   N_TILES = N_GLOBAL / N;
@@ -620,26 +624,22 @@ int main(int argc, char **argv) {
   double *A_h = NULL;
   double *B_h = NULL;
   float *C_h = NULL;
+  A_h = (double *)malloc(sizeof(double) * M_GLOBAL * K_GLOBAL);
+  B_h = (double *)malloc(sizeof(double) * K_GLOBAL * N_GLOBAL);
+  C_h = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
 
 #if CPU_DEBUG
   double *A_submatrix_h = NULL;
   double *B_submatrix_h = NULL;
   float *C_submatrix_h = NULL;
-  float *result_hD = NULL;
   float *result_host = NULL;
-#endif
+  float *answer = NULL;
 
-  A_h = (double *)malloc(sizeof(double) * M_GLOBAL * K_GLOBAL);
-  B_h = (double *)malloc(sizeof(double) * K_GLOBAL * N_GLOBAL);
-  C_h = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
-  
-#if CPU_DEBUG
   A_submatrix_h = (double *)malloc(sizeof(double) * WMMA_M * WMMA_K);
   B_submatrix_h = (double *)malloc(sizeof(double) * WMMA_K * WMMA_N);
   C_submatrix_h = (float *)malloc(sizeof(float) * WMMA_M * WMMA_N);
-  result_hD = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
+  answer = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
   result_host = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
-  memset(result_hD, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
   memset(result_host, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
 #endif
 
@@ -753,7 +753,6 @@ int main(int argc, char **argv) {
                                                (milliseconds / 1000.)) / 1e12);
 #if CPU_DEBUG
   printf("Verifying correctness of the computations...\n");
-  memcpy(result_hD, C_h, sizeof(float) * M_GLOBAL * N_GLOBAL);
   // matMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
   //                   K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
   checkCudaErrors(cudaEventRecord(start));
@@ -780,12 +779,30 @@ int main(int argc, char **argv) {
 
   printf("Time: %f ms\n", milliseconds);
   for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
-    if (fabs(result_hD[i] - result_host[i]) > 0.1f)
-      printf("mismatch i=%d result_hD=%f result_host=%f\n", i, result_hD[i],
+    if (fabs(C_h[i] - result_host[i]) > 0.1f)
+      printf("mismatch i=%d C_h=%f result_host=%f\n", i, C_h[i],
              result_host[i]);
              
   }
-  free(result_hD);
+
+  fp = fopen(argv[5], "rb");
+  fread(answer, sizeof(float), M_GLOBAL * N_GLOBAL, fp);
+  fclose(fp);
+
+  count = 0;
+  for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
+    if (fabs(answer[i] - C_h[i]) > 0.1f) {
+      printf("mismatch i=%d answer=%f c_h=%f\n", i, answer[i], C_h[i]);
+      count++;
+    }
+  }
+
+  if (count == 0) {
+    printf("test passed\n");
+  }
+
+  free(answer);
+
   free(result_host);
   free(A_submatrix_h);
   free(B_submatrix_h);
@@ -801,6 +818,5 @@ int main(int argc, char **argv) {
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(B)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(C)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(D)));
-
   return 0;
 }
