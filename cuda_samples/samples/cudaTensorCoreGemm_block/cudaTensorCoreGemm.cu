@@ -76,7 +76,7 @@
 
 #ifndef CPU_DEBUG
 // Set this to 1 to verify the correctness of the GPU-computed matrix.
-#define CPU_DEBUG 1
+#define CPU_DEBUG 0
 #endif
 
 #ifndef SHARED_MEMORY_LIMIT_64K
@@ -224,8 +224,8 @@ __global__ void tensorOp(half *a, half *b, float *c) {
   // Tile using a 2D grid
   // int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize; // [0, 1]
   // int warpN = (blockIdx.y * blockDim.y + threadIdx.y); // [0, 1]
-  int warpM = threadIdx.x / warpSize;
-  int warpN = threadIdx.y;
+  int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
+  int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
   int cRow = warpM * WMMA_M;
   int cCol = warpN * WMMA_N;
   // printf("warpM: %d, warpN: %d\n", warpM, warpN);
@@ -591,7 +591,7 @@ int main(int argc, char **argv) {
 
   int i, j, k;
   size_t dsize = M * K;
-  // dim3 gridDim;
+  dim3 gridDim;
   dim3 blockDim;
   printf("Initializing...\n");
 
@@ -636,11 +636,10 @@ int main(int argc, char **argv) {
   // for RTX 2080, we have 1024 threads per block.
   blockDim.y = N / WMMA_N; // 32 / 16 = 2
   blockDim.x = deviceProp.warpSize * blockDim.y; // 32 * 2 = 64
-  printf("blockDim.x=%d, blockDim.y=%d\n", blockDim.x, blockDim.y);
-  // gridDim.x = (M_GLOBAL + (M * blockDim.x / deviceProp.warpSize - 1)) /
-  //             (M * blockDim.x / deviceProp.warpSize);
-  // gridDim.y = (N_GLOBAL + N * blockDim.y - 1) / (N * blockDim.y);
-
+  gridDim.x = (M_GLOBAL + (M * blockDim.x / deviceProp.warpSize - 1)) /
+              (M * blockDim.x / deviceProp.warpSize);
+  gridDim.y = (N_GLOBAL + N * blockDim.y - 1) / (N * blockDim.y);
+  printf("gridDim.x=%d, gridDim.y=%d, blockDim.x=%d, blockDim.y=%d\n", gridDim.x, gridDim.y, blockDim.x, blockDim.y);
 
   checkCudaErrors(cudaEventCreate(&start));
   checkCudaErrors(cudaEventCreate(&stop));
