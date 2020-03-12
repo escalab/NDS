@@ -91,9 +91,9 @@
 #define WARP_SIZE 32
 
 // MMA matrix tile dimensions.
-#define M 512
-#define N 512
-#define K 512
+#define M 32
+#define N 32
+#define K 32
 
 #define WMMA_M 16
 #define WMMA_N 16
@@ -630,11 +630,12 @@ int main(int argc, char **argv) {
   // blockDim.y = 4;
 
   // for RTX 2080, we have 1024 threads per block.
-  blockDim.y = 4;
-  blockDim.x = 128; // deviceProp.warpSize * blockDim.y;
+  blockDim.y = N / WMMA_N; // 32 / 16 = 2
+  blockDim.x = deviceProp.warpSize * blockDim.y; // 32 * 2 = 64
   gridDim.x = (M_GLOBAL + (M * blockDim.x / deviceProp.warpSize - 1)) /
               (M * blockDim.x / deviceProp.warpSize);
   gridDim.y = (N_GLOBAL + N * blockDim.y - 1) / (N * blockDim.y);
+  printf("gridDim.x=%d, gridDim.y=%d, blockDim.x=%d, blockDim.y=%d\n", gridDim.x, gridDim.y, blockDim.x, blockDim.y);
 
   checkCudaErrors(cudaEventCreate(&start));
   checkCudaErrors(cudaEventCreate(&stop));
@@ -857,27 +858,32 @@ int main(int argc, char **argv) {
   checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
 
   printf("Time: %f ms\n", milliseconds);
-  for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
-    if (fabs(C_h[i] - result_host[i]) > 0.1f)
-      printf("mismatch i=%d C_h=%f result_host=%f\n", i, C_h[i],
-             result_host[i]);
-             
-  }
-
   fp = fopen(argv[5], "rb");
   fread(answer, sizeof(float), M_GLOBAL * N_GLOBAL, fp);
   fclose(fp);
 
   count = 0;
   for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
-    if (fabs(answer[i] - C_h[i]) > 0.1f) {
-      printf("mismatch i=%d answer=%f c_h=%f\n", i, answer[i], C_h[i]);
+    if (fabs(answer[i] - result_host[i]) > 0.1f) {
+      printf("mismatch i=%d answer=%f result_host=%f\n", i, answer[i], result_host[i]);
       count++;
     }
   }
 
   if (count == 0) {
-    printf("test passed\n");
+    printf("host computation test passed\n");
+  }
+
+  count = 0;
+  for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
+    if (fabs(C_h[i] - result_host[i]) > 0.1f) {
+      printf("mismatch i=%d C_h=%f result_host=%f\n", i, C_h[i], result_host[i]);
+      count++;
+    }             
+  }
+
+  if (count == 0) {
+    printf("TensorOP test passed\n");
   }
 
   free(answer);
