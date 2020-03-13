@@ -92,9 +92,9 @@
 
 // MMA matrix tile dimensions.
 
-#define M 32
-#define N 32
-#define K 32
+#define M 8192
+#define N 8192
+#define K 8192
 
 #define WMMA_M 16
 #define WMMA_N 16
