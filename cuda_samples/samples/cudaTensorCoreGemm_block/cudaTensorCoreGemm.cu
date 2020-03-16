@@ -76,7 +76,7 @@
 
 #ifndef CPU_DEBUG
 // Set this to 1 to verify the correctness of the GPU-computed matrix.
-#define CPU_DEBUG 0
+#define CPU_DEBUG 1
 #endif
 
 #ifndef SHARED_MEMORY_LIMIT_64K
@@ -92,9 +92,9 @@
 
 // MMA matrix tile dimensions.
 
-#define M 8192
-#define N 8192
-#define K 8192
+#define M 16
+#define N 16
+#define K 16
 
 #define WMMA_M 16
 #define WMMA_N 16
@@ -589,7 +589,9 @@ int main(int argc, char **argv) {
   float milliseconds = 0;
   int M_TILES, N_TILES, K_TILES, M_GLOBAL, N_GLOBAL, K_GLOBAL;
   cudaEvent_t start, stop;
-  FILE *fp;
+  
+  int count = 0;
+  FILE *a_fptr, *b_fptr;
 
   int i, j, k;
   size_t dsize = M * K;
@@ -611,7 +613,8 @@ int main(int argc, char **argv) {
 #endif
 
   // GEMM configuration.
-  fp = fopen(argv[1], "rb");
+  a_fptr = fopen(argv[1], "rb");
+  b_fptr = fopen(argv[1], "rb");
   M_GLOBAL = atoi(argv[2]);
   N_GLOBAL = atoi(argv[3]);
   K_GLOBAL = atoi(argv[4]);
@@ -672,15 +675,14 @@ int main(int argc, char **argv) {
   memset(result_host, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
 #endif
 
-  int count;
-  count = fread(A_h, sizeof(double), M_GLOBAL * K_GLOBAL, fp);
+  fseek(a_fptr, 0, SEEK_SET);
+  count = fread(A_h, sizeof(double), M_GLOBAL * K_GLOBAL, a_fptr);
   if (count != M_GLOBAL * K_GLOBAL) {
     printf("read num of element mismatched! count: %d, matrix_size: %d\n",count, M_GLOBAL * K_GLOBAL);
   }
 
-  fseek(fp, 0, SEEK_SET);
-
-  count = fread(B_h, sizeof(double), K_GLOBAL * N_GLOBAL, fp);
+  fseek(b_fptr, 0, SEEK_SET);
+  count = fread(B_h, sizeof(double), K_GLOBAL * N_GLOBAL, b_fptr);
   if (count != K_GLOBAL * N_GLOBAL) {
     printf("read num of element mismatched! count: %d, matrix_size: %d\n",count, K_GLOBAL * N_GLOBAL);
   }
@@ -824,10 +826,11 @@ int main(int argc, char **argv) {
   checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
 
   printf("Time: %f ms\n", milliseconds);
-
-  fp = fopen(argv[5], "rb");
-  fread(answer, sizeof(float), M_GLOBAL * N_GLOBAL, fp);
-  fclose(fp);
+  
+  FILE *ans_fptr;
+  ans_fptr = fopen(argv[5], "rb");
+  fread(answer, sizeof(float), M_GLOBAL * N_GLOBAL, ans_fptr);
+  fclose(ans_fptr);
 
   count = 0;
   for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
