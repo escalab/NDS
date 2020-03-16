@@ -81,7 +81,7 @@
 
 #ifndef CPU_DEBUG
 // Set this to 1 to verify the correctness of the GPU-computed matrix.
-#define CPU_DEBUG 1
+#define CPU_DEBUG 0
 #endif
 
 #ifndef SHARED_MEMORY_LIMIT_64K
@@ -97,9 +97,9 @@
 
 // MMA matrix tile dimensions.
 
-#define M 16
-#define N 16
-#define K 16
+#define M 8192
+#define N 8192
+#define K 8192
 
 #define WMMA_M 16
 #define WMMA_N 16
@@ -679,7 +679,7 @@ int main(int argc, char **argv) {
 #endif
   
   memset(C_h, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
-  
+
   double *A_double = NULL;
   half *A = NULL;
   double *B_double = NULL;

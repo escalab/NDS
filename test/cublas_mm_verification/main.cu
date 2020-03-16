@@ -9,15 +9,12 @@ int main (int argc, char *argv[])
 {
 
     Timer timer;
-    cudaError_t cuda_ret;
-
     // Initialize host variables ----------------------------------------------
 
     printf("\nSetting up the problem..."); fflush(stdout);
     startTime(&timer);
 
     float *A_h, *B_h, *C_h;
-    float *A_d, *B_d, *C_d;
     size_t A_sz, B_sz, C_sz;
     unsigned matArow, matAcol;
     unsigned matBrow, matBcol;
@@ -64,9 +61,8 @@ int main (int argc, char *argv[])
     // Launch kernel using msplitm ---------------------------
     printf("Launching kernel..."); fflush(stdout);
     startTime(&timer);
-    msplitm('N', 'N', matArow, matBcol, matBrow, 1.0f, A_h, matArow, B_h, matBrow, 0.0f, C_h, matBrow);
-
-    cuda_ret = cudaDeviceSynchronize();
+    msplitm(matArow, matBcol, matBrow, 1.0f, A_h, matArow, B_h, matBrow, 0.0f, C_h, matBrow);
+    cudaDeviceSynchronize();
     stopTime(&timer); printf("%f s\n", elapsedTime(timer));
 
     // Verify correctness -----------------------------------------------------

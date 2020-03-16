@@ -19,45 +19,37 @@ void copyElements(float* out, float* entry, unsigned long long eRows, unsigned l
 		for(unsigned long long j = 0; j < counterCols; ++j){
 			out[x*eRows*oCols + (i*oCols) + (y*eCols + j)] = entry[i*eCols + j];
 		}
-
 	}
-
-
-
 }
 
 
 
 
-void msplitm(char transa, char transb, unsigned long long m, unsigned long long n, unsigned long long k, float alpha, const float *A, int lda, const float *B, int ldb, float beta, float *C, int ldc)
+void msplitm(unsigned long long m, unsigned long long n, unsigned long long k, float alpha, const float *A, int lda, const float *B, int ldb, float beta, float *C, int ldc)
 {
-    float* A_d;
-    float* B_d;
-    float* C_d;
     unsigned long long A_sz = m * k;
     unsigned long long B_sz = n * k;
-    unsigned long long C_sz = m * n;
     unsigned long long MAX =  (unsigned long long )m* (unsigned long long) n / num_submatrix;
 
 	MAX -= MAX % k;
-	printf("MAX: %d\n", MAX);
-	printf("B_sz: %d\n",B_sz);
+	printf("MAX: %llu\n", MAX);
+	printf("B_sz: %llu\n",B_sz);
 	unsigned long long numSubMatrixB = B_sz / MAX;
-	printf("SubmatriciesB: %d\n", numSubMatrixB);
+	printf("SubmatriciesB: %llu\n", numSubMatrixB);
 	unsigned long long SMB_sz = B_sz / numSubMatrixB;
-	printf("SMB_sz: %d\n", SMB_sz);
+	printf("SMB_sz: %llu\n", SMB_sz);
 	unsigned long long subCols = B_sz / (numSubMatrixB * k);
-	printf("subCols: %d\n", subCols);
+	printf("subCols: %llu\n", subCols);
 	unsigned long long numSubMatrixA = A_sz / MAX;
 	unsigned long long SMA_sz = A_sz / numSubMatrixA;
 	unsigned long long subRows = A_sz / (numSubMatrixA * k);
-	printf("subrows: %d\n", subRows);
-	printf("SMA_sz: %d\n", SMA_sz);
-	printf("submatriciesA: %d\n", numSubMatrixA);
+	printf("subrows: %llu\n", subRows);
+	printf("SMA_sz: %llu\n", SMA_sz);
+	printf("submatriciesA: %llu\n", numSubMatrixA);
 	unsigned long long overflowA = m % subRows;
 	unsigned long long overflowB = n % subCols;
-	printf("overflowB: %d\n", overflowB);
-	printf("overflowA: %d\n", overflowA);
+	printf("overflowB: %llu\n", overflowB);
+	printf("overflowA: %llu\n", overflowA);
 	float** B_split = (float**)malloc(sizeof(float*) * (numSubMatrixB + 1));
 	for(int i = 0; i < numSubMatrixB + 1; ++i){
 		float* temp = (float*) malloc( sizeof(float)*subCols * k );
@@ -95,7 +87,7 @@ void msplitm(char transa, char transb, unsigned long long m, unsigned long long 
 		cudaMemcpy(temp2, temp, sizeof(float)*subRows*k, cudaMemcpyHostToDevice);
 		free(temp);
 
-		printf("Running multiply for row group %d\n", i);
+		printf("Running multiply for row group %llu\n", i);
 		temp = (float*)malloc(sizeof(float)*subRows*subCols);
 		for(int x = 0; x < numSubMatrixB + 1; ++x){
 				if(overflowB == 0 && x == numSubMatrixB){
@@ -118,8 +110,8 @@ void msplitm(char transa, char transb, unsigned long long m, unsigned long long 
 		
 		cudaFree(temp2);
 		cudaFree(temp3);
-		
 	}
+	free(B_split);
 }
 
 
