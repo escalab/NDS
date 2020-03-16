@@ -68,6 +68,11 @@
 #include <mma.h>
 #include <stdio.h>
 
+// for mmap
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+
 // helper functions and utilities to work with CUDA
 #include <helper_cuda.h>
 #include <helper_functions.h>
@@ -563,15 +568,14 @@ __host__ void matMultiplyOnHost(double *A, double *B, float *C, float alpha,
   }
 }
 
-__host__ void blockMatMultiplyOnHost(double *A, double *B, float *C, float alpha,
-  float beta, int numARows, int numAColumns, int numBRows, int numBColumns, int numCRows, int numCColumns) {
+__host__ void blockMatMultiplyOnHost(double *A, double *B, float *C, int numARows, int numAColumns, int numBRows, int numBColumns, int numCRows, int numCColumns) {
   int i, j, k, ii, jj, kk;
-  for (i = 0; i < numCRows; i += M) {
-    for (j = 0; j < numCColumns; j += N) {
-      for (k = 0; k < numAColumns; k += K) {
-        for (ii = i; ii < (i + M); ii++) {
-          for (jj = j; jj < (j + N); jj++) {
-            for (kk = k; kk < (k + K); kk++) {
+  for (i = 0; i < numCRows; i += WMMA_M) {
+    for (j = 0; j < numCColumns; j += WMMA_N) {
+      for (k = 0; k < numAColumns; k += WMMA_K) {
+        for (ii = i; ii < (i + WMMA_M); ii++) {
+          for (jj = j; jj < (j + WMMA_N); jj++) {
+            for (kk = k; kk < (k + WMMA_K); kk++) {
               C[ii * numCColumns + jj] += A[ii * numAColumns + kk] * B[kk * numBColumns + jj];
             }
           }
@@ -591,7 +595,7 @@ int main(int argc, char **argv) {
   cudaEvent_t start, stop;
   
   int count = 0;
-  FILE *a_fptr, *b_fptr;
+  int a_fd, b_fd;
 
   int i, j, k;
   size_t dsize = M * K;
@@ -613,8 +617,8 @@ int main(int argc, char **argv) {
 #endif
 
   // GEMM configuration.
-  a_fptr = fopen(argv[1], "rb");
-  b_fptr = fopen(argv[1], "rb");
+  a_fd = open(argv[1], O_RDONLY);
+  b_fd = open(argv[1], O_RDONLY);
   M_GLOBAL = atoi(argv[2]);
   N_GLOBAL = atoi(argv[3]);
   K_GLOBAL = atoi(argv[4]);
@@ -656,8 +660,8 @@ int main(int argc, char **argv) {
   double *A_h = NULL;
   double *B_h = NULL;
   float *C_h = NULL;
-  A_h = (double *)malloc(sizeof(double) * M_GLOBAL * K_GLOBAL);
-  B_h = (double *)malloc(sizeof(double) * K_GLOBAL * N_GLOBAL);
+  A_h = (double *) mmap(NULL, M_GLOBAL * K_GLOBAL * sizeof(double), PROT_READ, MAP_PRIVATE, a_fd, 0);
+  B_h = (double *) mmap(NULL, K_GLOBAL * N_GLOBAL * sizeof(double), PROT_READ, MAP_PRIVATE, b_fd, 0);
   C_h = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
 
 #if CPU_DEBUG
@@ -672,54 +676,10 @@ int main(int argc, char **argv) {
   C_submatrix_h = (float *)malloc(sizeof(float) * M * N);
   answer = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
   result_host = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
-  memset(result_host, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
 #endif
-
-  fseek(a_fptr, 0, SEEK_SET);
-  count = fread(A_h, sizeof(double), M_GLOBAL * K_GLOBAL, a_fptr);
-  if (count != M_GLOBAL * K_GLOBAL) {
-    printf("read num of element mismatched! count: %d, matrix_size: %d\n",count, M_GLOBAL * K_GLOBAL);
-  }
-
-  fseek(b_fptr, 0, SEEK_SET);
-  count = fread(B_h, sizeof(double), K_GLOBAL * N_GLOBAL, b_fptr);
-  if (count != K_GLOBAL * N_GLOBAL) {
-    printf("read num of element mismatched! count: %d, matrix_size: %d\n",count, K_GLOBAL * N_GLOBAL);
-  }
   
-  // init_host_matrices(B_h, N_GLOBAL, K_GLOBAL);
-  // init_host_matrices(C_h, M_GLOBAL, N_GLOBAL);
   memset(C_h, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
-
-  // printf("A = \n");
-  // for (i = 0; i < M_GLOBAL; i++) {
-  //   for (j = 0; j < K_GLOBAL; j++) {
-  //     printf("%f ", A_h[i*K_GLOBAL+j]);
-  //   }
-  //   printf("\n");
-  // }
-  // printf("\n");
-
-  // printf("B = \n");
-  // for (i = 0; i < K_GLOBAL; i++) {
-  //   for (j = 0; j < N_GLOBAL; j++) {
-  //     printf("%f ", B_h[i*N_GLOBAL+j]);
-  //   }
-  //   printf("\n");
-  // }
-  // printf("\n");
-
-
-  // printf("C = \n");
-  // for (i = 0; i < M_GLOBAL; i++) {
-  //   for (j = 0; j < N_GLOBAL; j++) {
-  //     printf("%f ", C_h[i*N_GLOBAL+j]);
-  //   }
-  //   printf("\n");
-  // }
-
-  printf("\n");
-
+  
   double *A_double = NULL;
   half *A = NULL;
   double *B_double = NULL;
@@ -770,21 +730,23 @@ int main(int argc, char **argv) {
   int cross_row = M_GLOBAL * K, cross_col = M * K;
   for (i = 0; i < (M_GLOBAL / M); i++) {
     for (j = 0; j < (N_GLOBAL / N); j++) {
-        checkCudaErrors(cudaMemcpy(C, (C_h + i * cross_row + j * cross_col), M * N * sizeof(float), cudaMemcpyHostToDevice));
-        for (k = 0; k < (K_GLOBAL / K); k++) {
-            // fill the block
-            // printf("%p\n", A_h + i * cross_row + k * cross_col);
-            checkCudaErrors(cudaMemcpy(B_double, (B_h + k * cross_row + j * cross_col), K * N * sizeof(double), cudaMemcpyHostToDevice));
-            checkCudaErrors(cudaMemcpy(A_double, (A_h + i * cross_row + k * cross_col), M * K * sizeof(double), cudaMemcpyHostToDevice));    
-            half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
-            half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
-            // If enough shared memory available on the GPU use high performant kernel
-            // checkCudaErrors(cudaFuncSetAttribute(compute_gemm, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ));
-            // <<<gridDim, blockDim, sizeof dynamic shared memory>>>
-            // checkKernelErrors((compute_gemm<<<deviceProp.multiProcessorCount, THREADS_PER_BLOCK, SHMEM_SZ>>>(A, B, C)));
-            tensorOp<<<gridDim, blockDim>>>(A, B, C);
-        }
-        checkCudaErrors(cudaMemcpy((C_h + i * cross_row + j * cross_col), C, M * N * sizeof(float), cudaMemcpyDeviceToHost));
+      checkCudaErrors(cudaMemcpy(C, (C_h + i * cross_row + j * cross_col), M * N * sizeof(float), cudaMemcpyHostToDevice));
+      for (k = 0; k < (K_GLOBAL / K); k++) {
+          // fill the block
+          // printf("%p\n", A_h + i * cross_row + k * cross_col);
+
+          // here we can use GPUDirect?
+          checkCudaErrors(cudaMemcpy(A_double, (A_h + i * cross_row + k * cross_col), M * K * sizeof(double), cudaMemcpyHostToDevice));    
+          checkCudaErrors(cudaMemcpy(B_double, (B_h + k * cross_row + j * cross_col), K * N * sizeof(double), cudaMemcpyHostToDevice));
+          half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(A_double, A, dsize);
+          half_conversion_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(B_double, B, dsize);
+          // If enough shared memory available on the GPU use high performant kernel
+          // checkCudaErrors(cudaFuncSetAttribute(compute_gemm, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ));
+          // <<<gridDim, blockDim, sizeof dynamic shared memory>>>
+          // checkKernelErrors((compute_gemm<<<deviceProp.multiProcessorCount, THREADS_PER_BLOCK, SHMEM_SZ>>>(A, B, C)));
+          tensorOp<<<gridDim, blockDim>>>(A, B, C);
+      }
+      checkCudaErrors(cudaMemcpy((C_h + i * cross_row + j * cross_col), C, M * N * sizeof(float), cudaMemcpyDeviceToHost));
     }
   }
 
@@ -806,18 +768,20 @@ int main(int argc, char **argv) {
   
   // custom block gemm
   cross_row = M_GLOBAL * K;
-  cross_col = K * K;
+  cross_col = M * K;
 
-  for (i = 0; i < (M_GLOBAL / K); i++) {
+  memset(C_submatrix_h, 0, M * N * sizeof(float));
+  memset(result_host, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
+  for (i = 0; i < (M_GLOBAL / M); i++) {
     for (j = 0; j < (N_GLOBAL / N); j++) {
-        memcpy(C_submatrix_h, (result_host + i * cross_row + j * cross_col), K * N * sizeof(float));
-        for (k = 0; k < (K_GLOBAL / K); k++) {
-            // fill the block
-            memcpy(A_submatrix_h, (A_h + i * cross_row + k * cross_col), K * K * sizeof(double));
-            memcpy(B_submatrix_h, (B_h + k * cross_row + j * cross_col), K * N * sizeof(double));
-            matMultiplyOnHost(A_submatrix_h, B_submatrix_h, C_submatrix_h, alpha, beta, K, K, K, N, K, N);
-        }
-        memcpy((result_host + i * cross_row + j * cross_col), C_submatrix_h, K * N * sizeof(float));
+      memcpy(C_submatrix_h, (result_host + i * cross_row + j * cross_col), M * N * sizeof(float));
+      for (k = 0; k < (K_GLOBAL / K); k++) {
+          // fill the block
+          memcpy(A_submatrix_h, (A_h + i * cross_row + k * cross_col), M * K * sizeof(double));
+          memcpy(B_submatrix_h, (B_h + k * cross_row + j * cross_col), K * N * sizeof(double));
+          blockMatMultiplyOnHost(A_submatrix_h, B_submatrix_h, C_submatrix_h, M, K, K, N, M, N);
+      }
+      memcpy((result_host + i * cross_row + j * cross_col), C_submatrix_h, M * N * sizeof(float));
     }
   }
   
@@ -860,12 +824,15 @@ int main(int argc, char **argv) {
 
   free(result_host);
   free(A_submatrix_h);
-  free(B_submatrix_h);
+  free(B_submatrix_h); 
   free(C_submatrix_h);
 #endif
 
-  free(A_h);
-  free(B_h);
+  munmap(A_h, sizeof(double) * M_GLOBAL * K_GLOBAL);
+  munmap(B_h, sizeof(double) * K_GLOBAL * N_GLOBAL);
+  close(a_fd);
+  close(b_fd);
+
   free(C_h);
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(A_double)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(A)));
