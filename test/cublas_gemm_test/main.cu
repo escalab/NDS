@@ -4,6 +4,11 @@
 #include <cuda_runtime.h>
 #include "cublas_v2.h"
 
+// for mmap
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+
 void verify(double *A, double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
     const float relativeTolerance = 1e-3;
   
@@ -60,31 +65,37 @@ float* doMultiply2Matrices(int m, int n, int k, double *a, double *b, float *c) 
     cudaFree(c_d);
     free(c_h);
     return c;
-}  
+}
 
 
 int main(int argc, char** argv) {
     double *a, *b;
     float *c;
-    int i, j, n;
-    if (argc < 2) {
-        printf("usage: %s <matrix size>\n", argv[0]);
+    int n;
+    int a_fd, b_fd;
+
+    if (argc < 3) {
+        printf("usage: %s <matrix path> <matrix size>\n", argv[0]);
         exit(1);
     }
 
-    n = atoi(argv[1]);
-    a = (double *) malloc(sizeof(double) * n * n);
-    b = (double *) malloc(sizeof(double) * n * n);
+    // GEMM configuration.
+    a_fd = open(argv[1], O_RDONLY);
+    b_fd = open(argv[1], O_RDONLY);
+
+    n = atoi(argv[2]);
+    a = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
+    b = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
+  
+    // a = (double *) malloc(sizeof(double) * n * n);
+    // b = (double *) malloc(sizeof(double) * n * n);
+
     c = (float *) calloc(n * n, sizeof(float));
 
-    for (i = 0; i < n * n; ++i) {
-        a[i] = (double) i;
-        b[i] = (double) n*n - i - 1;
-    }
-
     doMultiply2Matrices(n, n, n, a, b, c);
-    
+
 #ifdef DEBUG
+    int i, j;
     for (i = 0; i < n; i++) {
         for (j = 0; j < n; j++) {
             printf("%f ", a[i * n + j]);
@@ -109,10 +120,11 @@ int main(int argc, char** argv) {
     }
     printf("\n");
 #endif
-
     verify(a, b, c, n, n, n);
-    free(a);
-    free(b);
+    munmap(a, sizeof(double) * n * n);
+    munmap(b, sizeof(double) * n * n);
+    close(a_fd);
+    close(b_fd);
     free(c);
     return 0;
 }
