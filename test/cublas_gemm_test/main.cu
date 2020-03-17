@@ -79,40 +79,39 @@ float* tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     double alpha = 1.0;
     double beta = 1.0;
     double *a_sub_d, *b_sub_d, *c_sub_d;
-    double *c_h;
+    float *c_sub_f;
     cublasHandle_t handle;
     cublasCreate(&handle);
 
-    c_h = (double *) calloc(x * y, sizeof(double));
 
     cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
     cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
     cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
+    cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
+
+    int dsize = sub_m * sub_n;
 
     // custom block gemm
     for (i = 0; i < (x / sub_m); i++) {
         for (j = 0; j < (y / sub_n); j++) {
-            cudaMemcpy(c_sub_d, (c_h + i * cross_row + j * cross_col), sub_m * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+            cudaMemset(c_sub_d, 0, sub_m * sub_n * sizeof(double));
             for (k = 0; k < (z / sub_k); k++) {
                 // here we can use GPUDirect?
                 cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
                 cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
                 cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, sub_k, a_sub_d, sub_m, &beta, c_sub_d, sub_m);
             }
-            cudaMemcpy((c_h + i * cross_row + j * cross_col), c_sub_d, sub_m * sub_n * sizeof(double), cudaMemcpyDeviceToHost);
+            d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_sub_d, c_sub_f, dsize);
+            cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
         }
     }
-    
-    cublasDestroy(handle);
 
-    for (int i = 0; i < x * y; ++i) {
-        c[i] = (float) c_h[i];
-    }
+    cublasDestroy(handle);
 
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
     cudaFree(c_sub_d);
-    free(c_h);
+    cudaFree(c_sub_f);
 
     return c;
 }
