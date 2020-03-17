@@ -9,28 +9,88 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-void verify(double *A, double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
-    const float relativeTolerance = 1e-3;
-  
-    for(int row = 0; row < m; ++row) {
-        for(int col = 0; col < n; ++col) {
-            float sum = 0;
-            for(unsigned int i = 0; i < k; ++i) {
-                // printf("C[%u][%u] = A[%u][%u] * B[%u][%u]\n", row, col, row, i, i, col);
-                sum += (float) A[row*k + i]*B[i*n + col];
-            }
-            float relativeError = (sum - C[row*n + col])/sum;
-            if (fabs(relativeError) > relativeTolerance) {
-                printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], sum); 
-                printf("TEST FAILED\n\n");
-                exit(0);
-            }
+
+
+float* sequential_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {
+    int i, j, k, ii, jj, kk, i_idx, j_idx, k_idx;
+    double alpha = 1.0;
+    double beta = 0.0;
+    double *a_sub_d, *b_sub_d, *c_sub_d;
+    double *a_sub_h, *b_sub_h, *c_sub_h;
+    double *c_h;
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    a_sub_h = (double *) malloc(sizeof(double) * sub_m * sub_k);
+    b_sub_h = (double *) malloc(sizeof(double) * sub_k * sub_n);
+    c_sub_h = (double *) malloc(sizeof(double) * sub_m * sub_n);
+    c_h = (double *) malloc(sizeof(double) * x * y);
+
+    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
+    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
+    cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
+
+    for(i = 0; i < x; i += sub_m) {
+        for(j = 0; j < y; j += sub_n) {
+            for(k = 0; k < z; k += sub_k) {
+                // for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
+                //     for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                //         c_sub_h[i_idx * sub_n + j_idx] = c_h[ii * y + jj];
+                //     }
+                // }
+                for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
+                    for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
+                        a_sub_h[i_idx * sub_n + k_idx] = a[ii*y + kk];         
+                    }
+                }
+
+                for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                    for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
+                        b_sub_h[k_idx * sub_n + j_idx] = b[kk * y + jj];
+                    }
+                }
+                cudaMemcpy(a_sub_d, a_sub_h, sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);
+                cudaMemcpy(b_sub_d, b_sub_h, sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+                // cudaMemcpy(c_sub_d, c_sub_h, x * y * sizeof(double), cudaMemcpyHostToDevice);
+                // cublasDgemm EXPLANATION ------------------------------------------------
+                // the memory layout is different from we know
+                // a = [0 1; b = [3 2; 
+                //      2 3]      1 0]
+                // if use a_d then b_d, c[0][0] will be a[0, 0] * b[0, 0] + a[1, 0] * b[0, 1] = 4
+                // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
+                // maybe that's because inside GPU it uses column major storage.
+                cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, sub_k, a_sub_d, sub_m, &beta, c_sub_d, sub_m);
+                cudaMemcpy(c_sub_h, c_sub_d, sub_m * sub_n * sizeof(double), cudaMemcpyDeviceToHost);
+
+                for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+                    for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                        // could be casted to double here?
+                        c_h[ii * y + jj] += c_sub_h[i_idx * sub_n + j_idx];
+                    }
+                }  
+            }              
         }
+    }  
+    
+    cublasDestroy(handle);
+
+    for (int i = 0; i < x * y; ++i) {
+        c[i] = (float) c_h[i];
     }
-    printf("TEST PASSED\n\n");
+
+    cudaFree(a_sub_d);
+    cudaFree(b_sub_d);
+    cudaFree(c_sub_d);
+    free(a_sub_h);
+    free(b_sub_h);
+    free(c_sub_h);
+    free(c_h);
+
+    return c;
 }
 
-float* doMultiply2Matrices(int m, int n, int k, double *a, double *b, float *c) {
+float* doMultiply2Matrices(int m, int n, int k, const double *a, const double *b, float *c) {
     double alpha = 1.0;
     double beta = 0.0;
     double *a_d, *b_d, *c_d, *c_h;
@@ -45,6 +105,7 @@ float* doMultiply2Matrices(int m, int n, int k, double *a, double *b, float *c) 
     cudaMemcpy(a_d, a, sizeof(double) * m * k, cudaMemcpyHostToDevice);
     cudaMemcpy(b_d, b, sizeof(double) * k * n, cudaMemcpyHostToDevice);
 
+    // cublasDgemm EXPLANATION ------------------------------------------------
     // the memory layout is different from we know
     // a = [0 1; b = [3 2; 
     //      2 3]      1 0]
@@ -67,15 +128,55 @@ float* doMultiply2Matrices(int m, int n, int k, double *a, double *b, float *c) 
     return c;
 }
 
+void cpu_verify(double *A, double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
+    const float relativeTolerance = 1e-3;
+  
+    for(int row = 0; row < m; ++row) {
+        for(int col = 0; col < n; ++col) {
+            float sum = 0;
+            for(unsigned int i = 0; i < k; ++i) {
+                // printf("C[%u][%u] = A[%u][%u] * B[%u][%u]\n", row, col, row, i, i, col);
+                sum += (float) A[row*k + i]*B[i*n + col];
+            }
+            float relativeError = (sum - C[row*n + col])/sum;
+            if (fabs(relativeError) > relativeTolerance) {
+                printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], sum); 
+                printf("TEST FAILED\n\n");
+                exit(0);
+            }
+        }
+    }
+    printf("TEST PASSED\n\n");
+}
+
+void gpu_verify(const double *A, const double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
+    const float relativeTolerance = 1e-3;
+    float *c_valid = (float *) malloc(sizeof(float) * m * n);
+    doMultiply2Matrices(m, n, k, A, B, c_valid);
+
+    for(int row = 0; row < m; ++row) {
+        for(int col = 0; col < n; ++col) {
+            float relativeError = (c_valid[row*n + col] - C[row*n + col]) / c_valid[row*n + col];
+            if (fabs(relativeError) > relativeTolerance) {
+                printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], c_valid[row*n + col]); 
+                printf("TEST FAILED\n\n");
+                exit(0);
+            }
+        }
+    }
+    printf("TEST PASSED\n\n");
+    free(c_valid);
+}
+
 
 int main(int argc, char** argv) {
     double *a, *b;
     float *c;
-    int n;
+    int n, sub_n;
     int a_fd, b_fd;
 
     if (argc < 3) {
-        printf("usage: %s <matrix path> <matrix size>\n", argv[0]);
+        printf("usage: %s <matrix path> <matrix size> <submatrix size>\n", argv[0]);
         exit(1);
     }
 
@@ -84,6 +185,8 @@ int main(int argc, char** argv) {
     b_fd = open(argv[1], O_RDONLY);
 
     n = atoi(argv[2]);
+    sub_n = atoi(argv[3]);
+
     a = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
     b = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
   
@@ -91,8 +194,9 @@ int main(int argc, char** argv) {
     // b = (double *) malloc(sizeof(double) * n * n);
 
     c = (float *) calloc(n * n, sizeof(float));
+    // doMultiply2Matrices(n, n, n, a, b, c);
+    sequential_blockmm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 
-    doMultiply2Matrices(n, n, n, a, b, c);
 
 #ifdef DEBUG
     int i, j;
@@ -120,7 +224,7 @@ int main(int argc, char** argv) {
     }
     printf("\n");
 #endif
-    verify(a, b, c, n, n, n);
+    gpu_verify(a, b, c, n, n, n);
     munmap(a, sizeof(double) * n * n);
     munmap(b, sizeof(double) * n * n);
     close(a_fd);
