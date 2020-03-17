@@ -12,7 +12,67 @@
 // for timing
 #include <sys/time.h>
 
-float* tensor_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+#define THREADS_PER_BLOCK 256
+
+__global__ void d2f_kernel(double *din, float *dout, int dsize) {
+	int idx = threadIdx.x+blockDim.x*blockIdx.x;
+	if (idx < dsize)
+	{
+		dout[idx] = din[idx];
+	}
+}
+
+float* tensor_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {
+    int i, j, k;
+    int cross_row = x * sub_k, cross_col = sub_m * sub_k;
+    float alpha = 1.0;
+    float beta = 1.0;
+    float *a_sub_h, *b_sub_h, *c_sub_h;
+    double *a_sub_d, *b_sub_d, *c_sub_d;
+
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+
+    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
+    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
+    cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
+    cudaMalloc((void **) &a_sub_h, sizeof(float) * sub_m * sub_k);
+    cudaMalloc((void **) &b_sub_h, sizeof(float) * sub_k * sub_n);
+    cudaMalloc((void **) &c_sub_h, sizeof(float) * sub_m * sub_n);
+
+    int dsize = sub_m * sub_n;
+
+    // custom block gemm
+    for (i = 0; i < (x / sub_m); i++) {
+        for (j = 0; j < (y / sub_n); j++) {
+            cudaMemset(c_sub_h, 0, sub_m * sub_n * sizeof(float));
+            for (k = 0; k < (z / sub_k); k++) {
+                // here we can use GPUDirect?
+                cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
+                cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize);
+                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_h, dsize);
+                cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_h, sub_k, a_sub_h, sub_m, &beta, c_sub_h, sub_m);
+            }
+            cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_h, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
+        }
+    }
+    
+    cublasDestroy(handle);
+
+    cudaFree(a_sub_d);
+    cudaFree(b_sub_d);
+    cudaFree(c_sub_d);
+    cudaFree(a_sub_h);
+    cudaFree(b_sub_h);
+    cudaFree(c_sub_h);
+
+    return c;
+}
+
+float* tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
     double *a, double *b, float *c) {
     int i, j, k;
     int cross_row = x * sub_k, cross_col = sub_m * sub_k;
@@ -311,7 +371,7 @@ int main(int argc, char** argv) {
     printf("calculating the result of the tensor format\n");
     gettimeofday(&h_start, NULL);
 
-    tensor_blockmm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+    tensor_blockDgemm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
