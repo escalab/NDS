@@ -9,6 +9,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+// for timing
+#include <sys/time.h>
+
 float* tensor_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
     double *a, double *b, float *c) {
     int i, j, k;
@@ -219,6 +222,8 @@ int main(int argc, char** argv) {
     float *c, *answer_c;
     int n, sub_n, need_output = 0, is_passed = 0;
     int a_fd, b_fd;
+    struct timeval h_start, h_end;
+    long duration;
 
     if (argc < 5) {
         printf("usage: %s <sequence format path> <tensor format path> <matrix size> <submatrix size> [output?]\n", argv[0]);
@@ -245,10 +250,19 @@ int main(int argc, char** argv) {
     c = (float *) calloc(n * n, sizeof(float));
     answer_c = (float *) calloc(n * n, sizeof(float));
     printf("calculating the answer...\n");
+    gettimeofday(&h_start, NULL);
     doMultiply2Matrices(n, n, n, a, b, answer_c);
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("sequential format GEMM duration: %f ms\n", (float) duration / 1000);
 
     printf("calculating the result of the sequential format\n");
+    gettimeofday(&h_start, NULL);
     sequential_blockmm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("sequential format block-GEMM duration: %f ms\n", (float) duration / 1000);
+
 
 #ifdef DEBUG
     int i, j;
@@ -297,12 +311,19 @@ int main(int argc, char** argv) {
     memset(c, 0, sizeof(float) * n * n);
 
     printf("calculating the result of the tensor format\n");
+    gettimeofday(&h_start, NULL);
+
     tensor_blockmm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("tensor format block-GEMM duration: %f ms\n", (float) duration / 1000);
+
     printf("Reformat from tensor to sequential...\n");
-    
     int count = 0;
     float *c_reformat = (float *) calloc(n * n, sizeof(float));
+    gettimeofday(&h_start, NULL);
+
     for (int i = 0; i < n; i += sub_n) {
         for (int j = 0; j < n; j += sub_n) {  
             for(int ii = i; ii < i + sub_n; ii++) {
@@ -314,6 +335,10 @@ int main(int argc, char** argv) {
             }
         }
     }
+
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("Reformat from tensor to sequential duration: %f ms\n", (float) duration / 1000);  
 #ifdef DEBUG
     for (i = 0; i < n; i++) {
         for (j = 0; j < n; j++) {
