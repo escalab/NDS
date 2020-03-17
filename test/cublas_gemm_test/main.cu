@@ -171,7 +171,7 @@ float* doMultiply2Matrices(int m, int n, int k, const double *a, const double *b
     return c;
 }
 
-void cpu_verify(double *A, double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
+int cpu_verify(double *A, double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
     const float relativeTolerance = 1e-3;
   
     for(int row = 0; row < m; ++row) {
@@ -185,14 +185,15 @@ void cpu_verify(double *A, double *B, float *C, unsigned int m, unsigned int n, 
             if (fabs(relativeError) > relativeTolerance) {
                 printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], sum); 
                 printf("TEST FAILED\n\n");
-                exit(0);
+                return 0;
             }
         }
     }
     printf("TEST PASSED\n\n");
+    return 1;
 }
 
-void gpu_verify(const double *A, const double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
+int gpu_verify(const double *A, const double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
     const float relativeTolerance = 1e-3;
     float *c_valid = (float *) malloc(sizeof(float) * m * n);
     doMultiply2Matrices(m, n, k, A, B, c_valid);
@@ -203,23 +204,24 @@ void gpu_verify(const double *A, const double *B, float *C, unsigned int m, unsi
             if (fabs(relativeError) > relativeTolerance) {
                 printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], c_valid[row*n + col]); 
                 printf("TEST FAILED\n\n");
-                exit(0);
+                return 0;
             }
         }
     }
     printf("TEST PASSED\n\n");
     free(c_valid);
+    return 1;
 }
 
 
 int main(int argc, char** argv) {
     double *a, *b;
     float *c;
-    int n, sub_n;
+    int n, sub_n, need_output = 0, is_passed = 0;
     int a_fd, b_fd;
 
-    if (argc < 3) {
-        printf("usage: %s <sequence format path> <tensor format path> <matrix size> <submatrix size>\n", argv[0]);
+    if (argc < 5) {
+        printf("usage: %s <sequence format path> <tensor format path> <matrix size> <submatrix size> [output?]\n", argv[0]);
         exit(1);
     }
 
@@ -229,6 +231,10 @@ int main(int argc, char** argv) {
 
     n = atoi(argv[3]);
     sub_n = atoi(argv[4]);
+
+    if (argc > 5) {
+        need_output = atoi(argv[5]);
+    }
 
     a = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
     b = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
@@ -267,7 +273,15 @@ int main(int argc, char** argv) {
     }
     printf("\n");
 #endif
-    gpu_verify(a, b, c, n, n, n);
+    is_passed = gpu_verify(a, b, c, n, n, n);
+    if (is_passed && need_output) {
+        char filename[64];
+        FILE *fptr;
+        sprintf(filename, "ans_%d.bin", n);
+        fptr = fopen(filename, "wb");
+        printf("writing sequential answer to %s\n", filename);
+        fwrite(c, sizeof(float), n * n, fptr);
+    }
 
     // GEMM configuration.
     int a_tensor_fd = open(argv[2], O_RDONLY);
@@ -322,6 +336,16 @@ int main(int argc, char** argv) {
 #endif
 
     gpu_verify(a, b, c_reformat, n, n, n);
+
+    if (is_passed && need_output) {
+        char filename[64];
+        FILE *fptr;
+        sprintf(filename, "ans_block_%d_%d.bin", n, sub_n);
+        fptr = fopen(filename, "wb");
+        printf("writing sequential answer to %s\n", filename);
+        fwrite(c, sizeof(float), n * n, fptr);
+    }
+
     munmap(a, sizeof(double) * n * n);
     munmap(b, sizeof(double) * n * n);
     close(a_fd);
