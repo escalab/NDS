@@ -9,7 +9,50 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+float* tensor_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {
+    int i, j, k;
+    int cross_row = x * sub_k, cross_col = sub_m * sub_k;
+    double alpha = 1.0;
+    double beta = 1.0;
+    double *a_sub_d, *b_sub_d, *c_sub_d;
+    double *c_h;
+    cublasHandle_t handle;
+    cublasCreate(&handle);
 
+    c_h = (double *) calloc(x * y, sizeof(double));
+
+    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
+    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
+    cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
+
+    // custom block gemm
+    for (i = 0; i < (x / sub_m); i++) {
+        for (j = 0; j < (y / sub_n); j++) {
+            cudaMemcpy(c_sub_d, (c_h + i * cross_row + j * cross_col), sub_m * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+            for (k = 0; k < (z / sub_k); k++) {
+                // here we can use GPUDirect?
+                cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
+                cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+                cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, sub_k, a_sub_d, sub_m, &beta, c_sub_d, sub_m);
+            }
+            cudaMemcpy((c_h + i * cross_row + j * cross_col), c_sub_d, sub_m * sub_n * sizeof(double), cudaMemcpyDeviceToHost);
+        }
+    }
+    
+    cublasDestroy(handle);
+
+    for (int i = 0; i < x * y; ++i) {
+        c[i] = (float) c_h[i];
+    }
+
+    cudaFree(a_sub_d);
+    cudaFree(b_sub_d);
+    cudaFree(c_sub_d);
+    free(c_h);
+
+    return c;
+}
 
 float* sequential_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
     double *a, double *b, float *c) {
@@ -176,7 +219,7 @@ int main(int argc, char** argv) {
     int a_fd, b_fd;
 
     if (argc < 3) {
-        printf("usage: %s <matrix path> <matrix size> <submatrix size>\n", argv[0]);
+        printf("usage: %s <sequence format path> <tensor format path> <matrix size> <submatrix size>\n", argv[0]);
         exit(1);
     }
 
@@ -184,8 +227,8 @@ int main(int argc, char** argv) {
     a_fd = open(argv[1], O_RDONLY);
     b_fd = open(argv[1], O_RDONLY);
 
-    n = atoi(argv[2]);
-    sub_n = atoi(argv[3]);
+    n = atoi(argv[3]);
+    sub_n = atoi(argv[4]);
 
     a = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
     b = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
@@ -225,10 +268,71 @@ int main(int argc, char** argv) {
     printf("\n");
 #endif
     gpu_verify(a, b, c, n, n, n);
+
+    // GEMM configuration.
+    int a_tensor_fd = open(argv[2], O_RDONLY);
+    int b_tensor_fd = open(argv[2], O_RDONLY);
+
+    double *a_tensor = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_tensor_fd, 0);
+    double *b_tensor = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_tensor_fd, 0);
+    
+    memset(c, 0, sizeof(float) * n * n);
+
+    tensor_blockmm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+
+    printf("Reformat from tensor to sequential...\n");
+    
+    int count = 0;
+    float *c_reformat = (float *) calloc(n * n, sizeof(float));
+    for (int i = 0; i < n; i += sub_n) {
+        for (int j = 0; j < n; j += sub_n) {  
+            for(int ii = i; ii < i + sub_n; ii++) {
+                for(int jj = j; jj < j + sub_n; jj++) {
+                    // printf("ii: %d, jj: %d\n", ii, jj);
+                    c_reformat[ii * n + jj] = c[count];
+                    count++;
+                }
+            }
+        }
+    }
+#ifdef DEBUG
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++) {
+            printf("%f ", a_tensor[i * n + j]);
+        }
+        printf("\n");
+    }
+    printf("\n");
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++) {
+            printf("%f ", b_tensor[i * n + j]);
+        }
+        printf("\n");
+    }
+    printf("\n");
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++) {
+            printf("%f ", c[i * n + j]);
+        }
+        printf("\n");
+    }
+    printf("\n");
+#endif
+
+    gpu_verify(a, b, c_reformat, n, n, n);
     munmap(a, sizeof(double) * n * n);
     munmap(b, sizeof(double) * n * n);
     close(a_fd);
     close(b_fd);
+
+    munmap(a_tensor, sizeof(double) * n * n);
+    munmap(b_tensor, sizeof(double) * n * n);
+    close(a_tensor_fd);
+    close(b_tensor_fd);
+
+    free(c_reformat);
     free(c);
     return 0;
 }
