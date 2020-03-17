@@ -16,4 +16,4 @@ else
 fi
 
 echo ${MATRIX_SIZE} ${SUBMATRIX_SIZE} ${TYPE}
-./datagen_${TYPE} output_${TYPE}_${MATRIX_SIZE}.bin output_${TYPE}_block_${MATRIX_SIZE}.bin ${MATRIX_SIZE} ${SUBMATRIX_SIZE}
+./datagen_${TYPE} output_${TYPE}_${MATRIX_SIZE}.bin output_${TYPE}_block_${MATRIX_SIZE}_${SUBMATRIX_SIZE}.bin ${MATRIX_SIZE} ${SUBMATRIX_SIZE}
