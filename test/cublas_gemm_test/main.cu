@@ -219,9 +219,11 @@ int verify(const float *C, const float *answer, int m, int n) {
 
 int main(int argc, char** argv) {
     double *a, *b;
-    float *c, *answer_c;
+    double *a_tensor, *b_tensor;
+    float *c, *c_reformat, *answer_c;
     int n, sub_n, need_output = 0, is_passed = 0;
     int a_fd, b_fd;
+    int a_tensor_fd, b_tensor_fd;
     struct timeval h_start, h_end;
     long duration;
 
@@ -233,6 +235,8 @@ int main(int argc, char** argv) {
     // GEMM configuration.
     a_fd = open(argv[1], O_RDONLY);
     b_fd = open(argv[1], O_RDONLY);
+    a_tensor_fd = open(argv[2], O_RDONLY);
+    b_tensor_fd = open(argv[2], O_RDONLY);
 
     n = atoi(argv[3]);
     sub_n = atoi(argv[4]);
@@ -243,12 +247,13 @@ int main(int argc, char** argv) {
 
     a = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
     b = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
-  
-    // a = (double *) malloc(sizeof(double) * n * n);
-    // b = (double *) malloc(sizeof(double) * n * n);
+    a_tensor = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_tensor_fd, 0);
+    b_tensor = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_tensor_fd, 0);
+    c_reformat = (float *) calloc(n * n, sizeof(float));
 
     c = (float *) calloc(n * n, sizeof(float));
     answer_c = (float *) calloc(n * n, sizeof(float));
+    
     printf("calculating the answer...\n");
     gettimeofday(&h_start, NULL);
     doMultiply2Matrices(n, n, n, a, b, answer_c);
@@ -262,7 +267,6 @@ int main(int argc, char** argv) {
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("sequential format block-GEMM duration: %f ms\n", (float) duration / 1000);
-
 
 #ifdef DEBUG
     int i, j;
@@ -302,12 +306,6 @@ int main(int argc, char** argv) {
     }
 
     // GEMM configuration.
-    int a_tensor_fd = open(argv[2], O_RDONLY);
-    int b_tensor_fd = open(argv[2], O_RDONLY);
-
-    double *a_tensor = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_tensor_fd, 0);
-    double *b_tensor = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_tensor_fd, 0);
-    
     memset(c, 0, sizeof(float) * n * n);
 
     printf("calculating the result of the tensor format\n");
@@ -321,7 +319,6 @@ int main(int argc, char** argv) {
 
     printf("Reformat from tensor to sequential...\n");
     int count = 0;
-    float *c_reformat = (float *) calloc(n * n, sizeof(float));
     gettimeofday(&h_start, NULL);
 
     for (int i = 0; i < n; i += sub_n) {
