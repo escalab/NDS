@@ -81,7 +81,7 @@
 
 #ifndef CPU_DEBUG
 // Set this to 1 to verify the correctness of the GPU-computed matrix.
-#define CPU_DEBUG 0
+#define CPU_DEBUG 1
 #endif
 
 #ifndef SHARED_MEMORY_LIMIT_64K
@@ -173,6 +173,24 @@
   } while (0)
 
 using namespace nvcuda;
+
+int verify(const float *C, const float *answer, int m, int n) {
+  const float relativeTolerance = 1e-3;
+  int row, col;
+  float relativeError;
+  for(row = 0; row < m; ++row) {
+      for(col = 0; col < n; ++col) {
+          relativeError = (answer[row*n + col] - C[row*n + col]) / answer[row*n + col];
+          if (fabs(relativeError) > relativeTolerance) {
+              printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], answer[row*n + col]); 
+              printf("TEST FAILED\n\n");
+              return 0;
+          }
+      }
+  }
+  printf("TEST PASSED\n\n");
+  return 1;
+}
 
 __host__ void init_host_matrices(half *a, half *b, float *c, int M_GLOBAL, int N_GLOBAL, int K_GLOBAL) {
   for (int i = 0; i < M_GLOBAL; i++) {
@@ -588,13 +606,11 @@ __host__ void blockMatMultiplyOnHost(double *A, double *B, float *C, int numARow
 
 
 int main(int argc, char **argv) {
-  const float alpha = 1.0f;
-  const float beta = 0.0f;
   float milliseconds = 0;
   int M_TILES, N_TILES, K_TILES, M_GLOBAL, N_GLOBAL, K_GLOBAL;
   cudaEvent_t start, stop;
   
-  int count = 0;
+  int is_passed = 0;
   int a_fd, b_fd;
 
   int i, j, k;
@@ -665,17 +681,8 @@ int main(int argc, char **argv) {
   C_h = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
 
 #if CPU_DEBUG
-  double *A_submatrix_h = NULL;
-  double *B_submatrix_h = NULL;
-  float *C_submatrix_h = NULL;
-  float *result_host = NULL;
   float *answer = NULL;
-
-  A_submatrix_h = (double *)malloc(sizeof(double) * M * K);
-  B_submatrix_h = (double *)malloc(sizeof(double) * K * N);
-  C_submatrix_h = (float *)malloc(sizeof(float) * M * N);
   answer = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
-  result_host = (float *)malloc(sizeof(float) * M_GLOBAL * N_GLOBAL);
 #endif
   
   memset(C_h, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
@@ -685,7 +692,6 @@ int main(int argc, char **argv) {
   double *B_double = NULL;
   half *B = NULL;
   float *C = NULL;
-  float *D = NULL;
 
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A_double),
                              sizeof(double) * M * K));  
@@ -697,13 +703,10 @@ int main(int argc, char **argv) {
                              sizeof(half) * N * K));
   checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&C),
                              sizeof(float) * M * N));
-  checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&D),
-                             sizeof(float) * M * N));
 
   assert(((unsigned long long)A) % 128 == 0);
   assert(((unsigned long long)B) % 128 == 0);
   assert(((unsigned long long)C) % 128 == 0);
-  assert(((unsigned long long)D) % 128 == 0);
 
 
   printf("Preparing data for GPU...\n");
@@ -754,78 +757,26 @@ int main(int argc, char **argv) {
   checkCudaErrors(cudaEventSynchronize(stop));
   checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
 
-  printf("Time: %f ms\n", milliseconds);
+  printf("TensorOP Calculation Time: %f ms\n", milliseconds);
   printf("TFLOPS: %.2f\n", static_cast<double>((static_cast<double>(M_GLOBAL) *
                                                 N_GLOBAL * K_GLOBAL * 2) /
                                                (milliseconds / 1000.)) / 1e12);
 #if CPU_DEBUG
   printf("Verifying correctness of the computations...\n");
-  // matMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
-  //                   K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
-  checkCudaErrors(cudaEventRecord(start));
-  // blockMatMultiplyOnHost(A_h, B_h, result_host, alpha, beta, M_GLOBAL, K_GLOBAL,
-  //   K_GLOBAL, N_GLOBAL, M_GLOBAL, N_GLOBAL);
-  
-  // custom block gemm
-  cross_row = M_GLOBAL * K;
-  cross_col = M * K;
-
-  memset(C_submatrix_h, 0, M * N * sizeof(float));
-  memset(result_host, 0, sizeof(float) * M_GLOBAL * N_GLOBAL);
-  for (i = 0; i < (M_GLOBAL / M); i++) {
-    for (j = 0; j < (N_GLOBAL / N); j++) {
-      memcpy(C_submatrix_h, (result_host + i * cross_row + j * cross_col), M * N * sizeof(float));
-      for (k = 0; k < (K_GLOBAL / K); k++) {
-          // fill the block
-          memcpy(A_submatrix_h, (A_h + i * cross_row + k * cross_col), M * K * sizeof(double));
-          memcpy(B_submatrix_h, (B_h + k * cross_row + j * cross_col), K * N * sizeof(double));
-          blockMatMultiplyOnHost(A_submatrix_h, B_submatrix_h, C_submatrix_h, M, K, K, N, M, N);
-      }
-      memcpy((result_host + i * cross_row + j * cross_col), C_submatrix_h, M * N * sizeof(float));
-    }
-  }
-  
-  checkCudaErrors(cudaEventRecord(stop));
-  checkCudaErrors(cudaEventSynchronize(stop));
-  checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
-
-  printf("Time: %f ms\n", milliseconds);
   
   FILE *ans_fptr;
   ans_fptr = fopen(argv[5], "rb");
   fread(answer, sizeof(float), M_GLOBAL * N_GLOBAL, ans_fptr);
   fclose(ans_fptr);
 
-  count = 0;
-  for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
-    if (fabs(answer[i] - result_host[i]) > 0.1f) {
-      printf("mismatch i=%d answer=%f result_host=%f\n", i, answer[i], result_host[i]);
-      count++;
-    }
-  }
+  is_passed = verify(C_h, answer, M_GLOBAL, N_GLOBAL);;
 
-  if (count == 0) {
-    printf("host computation test passed\n");
-  }
-
-  count = 0;
-  for (int i = 0; i < M_GLOBAL * N_GLOBAL; i++) {
-    if (fabs(C_h[i] - result_host[i]) > 0.1f) {
-      printf("mismatch i=%d C_h=%f result_host=%f\n", i, C_h[i], result_host[i]);
-      count++;
-    }             
-  }
-
-  if (count == 0) {
+  if (is_passed) {
     printf("TensorOP test passed\n");
   }
 
   free(answer);
 
-  free(result_host);
-  free(A_submatrix_h);
-  free(B_submatrix_h); 
-  free(C_submatrix_h);
 #endif
 
   munmap(A_h, sizeof(double) * M_GLOBAL * K_GLOBAL);
@@ -839,6 +790,5 @@ int main(int argc, char **argv) {
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(B_double)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(B)));
   checkCudaErrors(cudaFree(reinterpret_cast<void *>(C)));
-  checkCudaErrors(cudaFree(reinterpret_cast<void *>(D)));
   return 0;
 }
