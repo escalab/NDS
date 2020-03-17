@@ -171,6 +171,7 @@ float* doMultiply2Matrices(int m, int n, int k, const double *a, const double *b
     return c;
 }
 
+// this one is good because it only takes one element space
 int cpu_verify(double *A, double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
     const float relativeTolerance = 1e-3;
   
@@ -193,30 +194,29 @@ int cpu_verify(double *A, double *B, float *C, unsigned int m, unsigned int n, u
     return 1;
 }
 
-int gpu_verify(const double *A, const double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
-    const float relativeTolerance = 1e-3;
-    float *c_valid = (float *) malloc(sizeof(float) * m * n);
-    doMultiply2Matrices(m, n, k, A, B, c_valid);
 
-    for(int row = 0; row < m; ++row) {
-        for(int col = 0; col < n; ++col) {
-            float relativeError = (c_valid[row*n + col] - C[row*n + col]) / c_valid[row*n + col];
+int verify(const float *C, const float *answer, int m, int n) {
+    const float relativeTolerance = 1e-3;
+    int row, col;
+    float relativeError;
+    for(row = 0; row < m; ++row) {
+        for(col = 0; col < n; ++col) {
+            relativeError = (answer[row*n + col] - C[row*n + col]) / answer[row*n + col];
             if (fabs(relativeError) > relativeTolerance) {
-                printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], c_valid[row*n + col]); 
+                printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], answer[row*n + col]); 
                 printf("TEST FAILED\n\n");
                 return 0;
             }
         }
     }
     printf("TEST PASSED\n\n");
-    free(c_valid);
     return 1;
 }
 
 
 int main(int argc, char** argv) {
     double *a, *b;
-    float *c;
+    float *c, *answer_c;
     int n, sub_n, need_output = 0, is_passed = 0;
     int a_fd, b_fd;
 
@@ -243,9 +243,12 @@ int main(int argc, char** argv) {
     // b = (double *) malloc(sizeof(double) * n * n);
 
     c = (float *) calloc(n * n, sizeof(float));
-    // doMultiply2Matrices(n, n, n, a, b, c);
-    sequential_blockmm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    answer_c = (float *) calloc(n * n, sizeof(float));
+    printf("calculating the answer...\n");
+    doMultiply2Matrices(n, n, n, a, b, answer_c);
 
+    printf("calculating the result of the sequential format\n");
+    sequential_blockmm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 
 #ifdef DEBUG
     int i, j;
@@ -273,7 +276,8 @@ int main(int argc, char** argv) {
     }
     printf("\n");
 #endif
-    is_passed = gpu_verify(a, b, c, n, n, n);
+
+    is_passed = verify(c, answer_c, n, n);
     if (is_passed && need_output) {
         char filename[64];
         FILE *fptr;
@@ -292,6 +296,7 @@ int main(int argc, char** argv) {
     
     memset(c, 0, sizeof(float) * n * n);
 
+    printf("calculating the result of the tensor format\n");
     tensor_blockmm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 
     printf("Reformat from tensor to sequential...\n");
@@ -335,8 +340,7 @@ int main(int argc, char** argv) {
     printf("\n");
 #endif
 
-    gpu_verify(a, b, c_reformat, n, n, n);
-
+    is_passed = verify(c_reformat, answer_c, n, n);
     if (is_passed && need_output) {
         char filename[64];
         FILE *fptr;
@@ -356,6 +360,7 @@ int main(int argc, char** argv) {
     close(a_tensor_fd);
     close(b_tensor_fd);
 
+    free(answer_c);
     free(c_reformat);
     free(c);
     return 0;
