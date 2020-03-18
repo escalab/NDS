@@ -733,7 +733,8 @@ int main(int argc, char **argv) {
   int cross_row = M_GLOBAL * K, cross_col = M * K;
   for (i = 0; i < (M_GLOBAL / M); i++) {
     for (j = 0; j < (N_GLOBAL / N); j++) {
-      checkCudaErrors(cudaMemcpy(C, (C_h + i * cross_row + j * cross_col), M * N * sizeof(float), cudaMemcpyHostToDevice));
+      // checkCudaErrors(cudaMemcpy(C, (C_h + i * cross_row + j * cross_col), M * N * sizeof(float), cudaMemcpyHostToDevice));
+      checkCudaErrors(cudaMemset(C, 0, M * N * sizeof(float)));
       for (k = 0; k < (K_GLOBAL / K); k++) {
           // fill the block
           // printf("%p\n", A_h + i * cross_row + k * cross_col);
