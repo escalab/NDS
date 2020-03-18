@@ -185,21 +185,18 @@ float* tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     return c;
 }
 
-float* sequential_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+
+float* sequential_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
     double *a, double *b, float *c) {
-    int i, j, k, ii, jj, kk, i_idx, j_idx, k_idx;
+    int i, j, k, ii, kk, i_idx, k_idx;
     double alpha = 1.0;
     double beta = 1.0;
     double *a_sub_d, *b_sub_d, *c_sub_d;
-    double *a_sub_h, *b_sub_h;
-    float *c_sub_f, *c_sub_h;
+    float *c_sub_f;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
 
-    a_sub_h = (double *) malloc(sizeof(double) * sub_m * sub_k);
-    b_sub_h = (double *) malloc(sizeof(double) * sub_k * sub_n);
-    c_sub_h = (float *) malloc(sizeof(float) * sub_m * sub_n);
     cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
     cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
     cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
@@ -212,18 +209,12 @@ float* sequential_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
             cudaMemset(c_sub_d, 0, sub_m * sub_n * sizeof(double));
             for (k = 0; k < z; k += sub_k) {
                 for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
-                    for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
-                        a_sub_h[i_idx * sub_n + k_idx] = a[ii*y + kk];         
-                    }
+                    cudaMemcpy((a_sub_d + i_idx * sub_n), (a + ii*y + k), sub_k * sizeof(double), cudaMemcpyHostToDevice);
                 }
 
-                for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
-                    for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
-                        b_sub_h[k_idx * sub_n + j_idx] = b[kk * y + jj];
-                    }
+                for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
+                    cudaMemcpy((b_sub_d + k_idx * sub_n), (b + kk * y + j), sub_n * sizeof(double), cudaMemcpyHostToDevice);
                 }
-                cudaMemcpy(a_sub_d, a_sub_h, sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);
-                cudaMemcpy(b_sub_d, b_sub_h, sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
                 // cublasDgemm EXPLANATION ------------------------------------------------
                 // the memory layout is different from we know
                 // a = [0 1; b = [3 2; 
@@ -234,13 +225,8 @@ float* sequential_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
                 cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, sub_k, a_sub_d, sub_m, &beta, c_sub_d, sub_m);
             }
             d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_sub_d, c_sub_f, dsize);
-            cudaMemcpy(c_sub_h, c_sub_f, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
-
             for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
-                for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
-                    // could be casted to double here?
-                    c[ii * y + jj] = c_sub_h[i_idx * sub_n + j_idx];
-                }
+                cudaMemcpy((c + ii * y + j), (c_sub_f + i_idx * sub_n), sub_n * sizeof(float), cudaMemcpyDeviceToHost);
             }                
         }
     }  
@@ -251,9 +237,6 @@ float* sequential_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     cudaFree(b_sub_d);
     cudaFree(c_sub_d);
     cudaFree(c_sub_f);
-    free(a_sub_h);
-    free(b_sub_h);
-    free(c_sub_h);
 
     return c;
 }
@@ -385,7 +368,7 @@ int main(int argc, char** argv) {
 
     printf("calculating the result of the sequential format\n");
     gettimeofday(&h_start, NULL);
-    sequential_blockmm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    sequential_blockDgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("sequential format block-GEMM duration: %f ms\n", (float) duration / 1000);
