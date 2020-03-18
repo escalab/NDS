@@ -97,8 +97,8 @@ float* tensor_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     int cross_row = x * sub_k, cross_col = sub_m * sub_k;
     float alpha = 1.0;
     float beta = 1.0;
-    float *a_sub_h, *b_sub_h, *c_sub_h;
-    double *a_sub_d, *b_sub_d, *c_sub_d;
+    float *a_sub_f, *b_sub_f, *c_sub_f;
+    double *a_sub_d, *b_sub_d;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
@@ -106,26 +106,25 @@ float* tensor_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
 
     cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
     cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
-    cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
-    cudaMalloc((void **) &a_sub_h, sizeof(float) * sub_m * sub_k);
-    cudaMalloc((void **) &b_sub_h, sizeof(float) * sub_k * sub_n);
-    cudaMalloc((void **) &c_sub_h, sizeof(float) * sub_m * sub_n);
+    cudaMalloc((void **) &a_sub_f, sizeof(float) * sub_m * sub_k);
+    cudaMalloc((void **) &b_sub_f, sizeof(float) * sub_k * sub_n);
+    cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
 
     int dsize = sub_m * sub_n;
 
     // custom block gemm
     for (i = 0; i < (x / sub_m); i++) {
         for (j = 0; j < (y / sub_n); j++) {
-            cudaMemset(c_sub_h, 0, sub_m * sub_n * sizeof(float));
+            cudaMemset(c_sub_f, 0, sub_m * sub_n * sizeof(float));
             for (k = 0; k < (z / sub_k); k++) {
                 // here we can use GPUDirect?
                 cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
                 cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
-                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize);
-                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_h, dsize);
-                cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_h, sub_k, a_sub_h, sub_m, &beta, c_sub_h, sub_m);
+                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_f, dsize);
+                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_f, dsize);
+                cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_f, sub_k, a_sub_f, sub_m, &beta, c_sub_f, sub_m);
             }
-            cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_h, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
+            cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
         }
     }
     
@@ -133,10 +132,9 @@ float* tensor_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
 
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
-    cudaFree(c_sub_d);
-    cudaFree(a_sub_h);
-    cudaFree(b_sub_h);
-    cudaFree(c_sub_h);
+    cudaFree(a_sub_f);
+    cudaFree(b_sub_f);
+    cudaFree(c_sub_f);
 
     return c;
 }
@@ -190,7 +188,7 @@ float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_
     int i, j, k, ii, kk, i_idx, k_idx;
     float alpha = 1.0;
     float beta = 1.0;
-    double *a_sub_d, *b_sub_d, *c_sub_d;
+    double *a_sub_d, *b_sub_d;
     float *a_sub_f, *b_sub_f, *c_sub_f;
 
     cublasHandle_t handle;
@@ -198,7 +196,6 @@ float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_
 
     cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
     cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
-    cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
     cudaMalloc((void **) &a_sub_f, sizeof(float) * sub_m * sub_k);
     cudaMalloc((void **) &b_sub_f, sizeof(float) * sub_k * sub_n);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
@@ -238,7 +235,6 @@ float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_
 
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
-    cudaFree(c_sub_d);
     cudaFree(a_sub_f);
     cudaFree(b_sub_f);
     cudaFree(c_sub_f);
