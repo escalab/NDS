@@ -189,30 +189,28 @@ float* sequential_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     double *a, double *b, float *c) {
     int i, j, k, ii, jj, kk, i_idx, j_idx, k_idx;
     double alpha = 1.0;
-    double beta = 0.0;
+    double beta = 1.0;
     double *a_sub_d, *b_sub_d, *c_sub_d;
-    double *a_sub_h, *b_sub_h, *c_sub_h;
-    double *c_h;
+    double *a_sub_h, *b_sub_h;
+    float *c_sub_f, *c_sub_h;
+
     cublasHandle_t handle;
     cublasCreate(&handle);
 
     a_sub_h = (double *) malloc(sizeof(double) * sub_m * sub_k);
     b_sub_h = (double *) malloc(sizeof(double) * sub_k * sub_n);
-    c_sub_h = (double *) malloc(sizeof(double) * sub_m * sub_n);
-    c_h = (double *) malloc(sizeof(double) * x * y);
-
+    c_sub_h = (float *) malloc(sizeof(float) * sub_m * sub_n);
     cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
     cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
     cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
+    cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
 
-    for(i = 0; i < x; i += sub_m) {
-        for(j = 0; j < y; j += sub_n) {
-            for(k = 0; k < z; k += sub_k) {
-                // for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
-                //     for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
-                //         c_sub_h[i_idx * sub_n + j_idx] = c_h[ii * y + jj];
-                //     }
-                // }
+    int dsize = sub_m * sub_n;
+
+    for (i = 0; i < x; i += sub_m) {
+        for (j = 0; j < y; j += sub_n) {
+            cudaMemset(c_sub_d, 0, sub_m * sub_n * sizeof(double));
+            for (k = 0; k < z; k += sub_k) {
                 for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
                     for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
                         a_sub_h[i_idx * sub_n + k_idx] = a[ii*y + kk];         
@@ -226,7 +224,6 @@ float* sequential_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
                 }
                 cudaMemcpy(a_sub_d, a_sub_h, sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);
                 cudaMemcpy(b_sub_d, b_sub_h, sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
-                // cudaMemcpy(c_sub_d, c_sub_h, x * y * sizeof(double), cudaMemcpyHostToDevice);
                 // cublasDgemm EXPLANATION ------------------------------------------------
                 // the memory layout is different from we know
                 // a = [0 1; b = [3 2; 
@@ -235,31 +232,28 @@ float* sequential_blockmm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
                 // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
                 // maybe that's because inside GPU it uses column major storage.
                 cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, sub_k, a_sub_d, sub_m, &beta, c_sub_d, sub_m);
-                cudaMemcpy(c_sub_h, c_sub_d, sub_m * sub_n * sizeof(double), cudaMemcpyDeviceToHost);
+            }
+            d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_sub_d, c_sub_f, dsize);
+            cudaMemcpy(c_sub_h, c_sub_f, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
 
-                for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
-                    for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
-                        // could be casted to double here?
-                        c_h[ii * y + jj] += c_sub_h[i_idx * sub_n + j_idx];
-                    }
-                }  
-            }              
+            for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+                for (jj = j, j_idx = 0; jj < (j + sub_n); jj++, j_idx++) {
+                    // could be casted to double here?
+                    c[ii * y + jj] = c_sub_h[i_idx * sub_n + j_idx];
+                }
+            }                
         }
     }  
     
     cublasDestroy(handle);
 
-    for (int i = 0; i < x * y; ++i) {
-        c[i] = (float) c_h[i];
-    }
-
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
     cudaFree(c_sub_d);
+    cudaFree(c_sub_f);
     free(a_sub_h);
     free(b_sub_h);
     free(c_sub_h);
-    free(c_h);
 
     return c;
 }
