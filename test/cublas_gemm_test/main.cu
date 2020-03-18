@@ -185,6 +185,66 @@ float* tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     return c;
 }
 
+float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {
+    int i, j, k, ii, kk, i_idx, k_idx;
+    float alpha = 1.0;
+    float beta = 1.0;
+    double *a_sub_d, *b_sub_d, *c_sub_d;
+    float *a_sub_f, *b_sub_f, *c_sub_f;
+
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
+    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
+    cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
+    cudaMalloc((void **) &a_sub_f, sizeof(float) * sub_m * sub_k);
+    cudaMalloc((void **) &b_sub_f, sizeof(float) * sub_k * sub_n);
+    cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
+
+    int dsize = sub_m * sub_n;
+
+    for (i = 0; i < x; i += sub_m) {
+        for (j = 0; j < y; j += sub_n) {
+            cudaMemset(c_sub_f, 0, sub_m * sub_n * sizeof(float));
+            for (k = 0; k < z; k += sub_k) {
+                for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
+                    cudaMemcpy((a_sub_d + i_idx * sub_n), (a + ii*y + k), sub_k * sizeof(double), cudaMemcpyHostToDevice);
+                }
+
+                for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
+                    cudaMemcpy((b_sub_d + k_idx * sub_n), (b + kk * y + j), sub_n * sizeof(double), cudaMemcpyHostToDevice);
+                }
+
+                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_f, dsize);
+                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_f, dsize);
+                // cublasDgemm EXPLANATION ------------------------------------------------
+                // the memory layout is different from we know
+                // a = [0 1; b = [3 2; 
+                //      2 3]      1 0]
+                // if use a_d then b_d, c[0][0] will be a[0, 0] * b[0, 0] + a[1, 0] * b[0, 1] = 4
+                // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
+                // maybe that's because inside GPU it uses column major storage.
+                cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_f, sub_k, a_sub_f, sub_m, &beta, c_sub_f, sub_m);
+            }
+            for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+                cudaMemcpy((c + ii * y + j), (c_sub_f + i_idx * sub_n), sub_n * sizeof(float), cudaMemcpyDeviceToHost);
+            }                
+        }
+    }  
+    
+    cublasDestroy(handle);
+
+    cudaFree(a_sub_d);
+    cudaFree(b_sub_d);
+    cudaFree(c_sub_d);
+    cudaFree(a_sub_f);
+    cudaFree(b_sub_f);
+    cudaFree(c_sub_f);
+
+    return c;
+}
 
 float* sequential_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
     double *a, double *b, float *c) {
@@ -368,7 +428,7 @@ int main(int argc, char** argv) {
 
     printf("calculating the result of the sequential format\n");
     gettimeofday(&h_start, NULL);
-    sequential_blockDgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    sequential_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("sequential format block-GEMM duration: %f ms\n", (float) duration / 1000);
