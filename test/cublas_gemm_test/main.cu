@@ -297,17 +297,62 @@ float* sequential_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_
     return c;
 }
 
-float* doMultiply2Matrices(int m, int n, int k, const double *a, const double *b, float *c) {
+float* wholeMatrixSgemm(int m, int n, int k, const double *a, const double *b, float *c) {
+    float alpha = 1.0;
+    float beta = 0.0;
+    double *a_d, *b_d;
+    float *a_f, *b_f, *c_f;
+    int dsize = m * n;
+
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    cudaMalloc((void **) &a_d, sizeof(double) * m * k);
+    cudaMalloc((void **) &b_d, sizeof(double) * k * n);
+    cudaMalloc((void **) &a_f, sizeof(float) * m * k);
+    cudaMalloc((void **) &b_f, sizeof(float) * k * n);
+    cudaMalloc((void **) &c_f, sizeof(float) * m * n);
+
+    cudaMemcpy(a_d, a, sizeof(double) * m * k, cudaMemcpyHostToDevice);
+    cudaMemcpy(b_d, b, sizeof(double) * k * n, cudaMemcpyHostToDevice);
+
+    d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_d, a_f, dsize);
+    d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_d, b_f, dsize);
+
+    cudaFree(a_d);
+    cudaFree(b_d);
+    // cublasDgemm EXPLANATION ------------------------------------------------
+    // the memory layout is different from we know
+    // a = [0 1; b = [3 2; 
+    //      2 3]      1 0]
+    // if use a_d then b_d, c[0][0] will be a[0, 0] * b[0, 0] + a[1, 0] * b[0, 1] = 4
+    // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
+    // maybe that's because inside GPU it uses column major storage.
+    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, b_f, k, a_f, m, &beta, c_f, m);
+    cudaFree(a_f);
+    cudaFree(b_f);
+
+    cudaMemcpy(c, c_f, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
+    
+    cublasDestroy(handle);
+
+    cudaFree(c_f);
+    return c;
+}
+
+float* wholeMatrixDgemm(int m, int n, int k, const double *a, const double *b, float *c) {
     double alpha = 1.0;
     double beta = 0.0;
-    double *a_d, *b_d, *c_d, *c_h;
+    double *a_d, *b_d, *c_d;
+    float *c_f;
+    int dsize = m * n;
+
     cublasHandle_t handle;
     cublasCreate(&handle);
 
     cudaMalloc((void **) &a_d, sizeof(double) * m * k);
     cudaMalloc((void **) &b_d, sizeof(double) * k * n);
     cudaMalloc((void **) &c_d, sizeof(double) * m * n);
-    c_h = (double *) malloc(sizeof(double) * m * n);
 
     cudaMemcpy(a_d, a, sizeof(double) * m * k, cudaMemcpyHostToDevice);
     cudaMemcpy(b_d, b, sizeof(double) * k * n, cudaMemcpyHostToDevice);
@@ -320,18 +365,17 @@ float* doMultiply2Matrices(int m, int n, int k, const double *a, const double *b
     // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
     // maybe that's because inside GPU it uses column major storage.
     cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, b_d, k, a_d, m, &beta, c_d, m);
-    
-    cudaMemcpy(c_h, c_d, sizeof(double) * m * n, cudaMemcpyDeviceToHost);
-    cublasDestroy(handle);
-
-    for (int i = 0; i < m * n; ++i) {
-        c[i] = (float) c_h[i];
-    }
-
     cudaFree(a_d);
     cudaFree(b_d);
+
+    cudaMalloc((void **) &c_f, sizeof(float) * m * n);
+    d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_d, c_f, dsize);
+    cudaMemcpy(c, c_f, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
+    
+    cublasDestroy(handle);
+
     cudaFree(c_d);
-    free(c_h);
+    cudaFree(c_f);
     return c;
 }
 
@@ -417,7 +461,7 @@ int main(int argc, char** argv) {
     
     printf("calculating the answer...\n");
     gettimeofday(&h_start, NULL);
-    doMultiply2Matrices(n, n, n, a, b, answer_c);
+    wholeMatrixSgemm(n, n, n, a, b, answer_c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("sequential format GEMM duration: %f ms\n", (float) duration / 1000);
