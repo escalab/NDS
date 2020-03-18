@@ -1,7 +1,7 @@
 NVCC        = nvcc
 NVCC_FLAGS  = -O3 -I/usr/local/cuda/include  -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
 LD_FLAGS    = -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
-TARGET      = cublas_gemm_test
+TARGET      = cublas_gemm_verification
 OBJ 		= main.o 
 SRC			= main.cu
 
@@ -21,3 +21,6 @@ $(TARGET): $(SRC)
 
 clean:
 	rm -rf $(OBJ) $(TARGET)
+
+clean_answer:
+	rm -rf *.bin
