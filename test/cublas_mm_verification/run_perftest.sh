@@ -5,6 +5,8 @@ seq_prog_arr=("cublas_perftest_0" "cublas_perftest_1")
 block_seq=("cublas_perftest_2" "cublas_perftest_3")
 tensor_prog_arr=("cublas_perftest_4" "cublas_perftest_5")
 
+clean_cache="free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+
 matrix_size=16384
 submatrix_size=8192
 
@@ -35,32 +37,42 @@ done
 echo "doing sequential GEMM"
 for prog in "${seq_prog_arr[@]}"
 do
+    echo ./${prog} ${matrix_data} ${matrix_size}
     for i in $(seq 1 ${iter_num})
     do
-        echo ./${prog} ${matrix_data} ${matrix_size}
-        ./${prog} ${matrix_data} ${matrix_size} | tee -a out_${prog}.txt
-        ${nvprof_path} ./${prog} ${matrix_data} ${matrix_size} | tee -a out_${prog}.txt
+        ./${prog} ${matrix_data} ${matrix_size} |& tee -a out_${prog}.txt
+    done
+    for i in $(seq 1 ${iter_num})
+    do
+        ${nvprof_path} ./${prog} ${matrix_data} ${matrix_size} |& tee -a out_${prog}.txt
     done
 done
 
 echo "doing sequential block-GEMM"
 for prog in "${block_seq[@]}"
 do
+    echo ./${prog} ${matrix_data} ${matrix_size} ${submatrix_size}
     for i in $(seq 1 ${iter_num})
     do
-        echo ./${prog} ${matrix_data} ${matrix_size} ${submatrix_size}
-        ./${prog} ${matrix_data} ${matrix_size} ${submatrix_size} | tee -a out_${prog}.txt
-        ${nvprof_path} ./${prog} ${matrix_data} ${matrix_size} ${submatrix_size} | tee -a out_${prog}.txt
+        ./${prog} ${matrix_data} ${matrix_size} ${submatrix_size} |& tee -a out_${prog}.txt
     done
+    for i in $(seq 1 ${iter_num})
+    do
+        ${nvprof_path} ./${prog} ${matrix_data} ${matrix_size} ${submatrix_size} |& tee -a out_${prog}.txt
+    done
+
 done
 
 echo "doing tensor block-GEMM"
 for prog in "${tensor_prog_arr[@]}"
 do
+    echo ./${prog} ${tensor_data} ${matrix_size} ${submatrix_size}
     for i in $(seq 1 ${iter_num})
     do
-        echo ./${prog} ${tensor_data} ${matrix_size} ${submatrix_size}
-        ./${prog} ${tensor_data} ${matrix_size} ${submatrix_size} | tee -a out_${prog}.txt
-        ${nvprof_path} ./${prog} ${tensor_data} ${matrix_size} ${submatrix_size} | tee -a out_${prog}.txt
+        ./${prog} ${tensor_data} ${matrix_size} ${submatrix_size} |& tee -a out_${prog}.txt
+    done
+    for i in $(seq 1 ${iter_num})
+    do
+        ${nvprof_path} ./${prog} ${tensor_data} ${matrix_size} ${submatrix_size} |& tee -a out_${prog}.txt
     done
 done

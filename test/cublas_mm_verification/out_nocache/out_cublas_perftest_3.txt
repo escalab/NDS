@@ -1,0 +1,160 @@
+calculating the answer...
+computation duration: 8718.421875 ms
+calculating the answer...
+computation duration: 8820.578125 ms
+calculating the answer...
+computation duration: 8747.224609 ms
+calculating the answer...
+computation duration: 8601.552734 ms
+calculating the answer...
+computation duration: 8772.326172 ms
+==18262== NVPROF is profiling process 18262, command: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+calculating the answer...
+computation duration: 9598.460938 ms
+==18262== Profiling application: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+==18262== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   63.15%  563.48ms    131073  4.2990us  1.1520us  5.0880us  [CUDA memcpy HtoD]
+                   24.58%  219.34ms         8  27.417ms  25.094ms  31.909ms  turing_s1688gemm_fp16_128x256_ldg8_nn
+                   11.99%  106.99ms     32768  3.2640us  3.1350us  4.3520us  [CUDA memcpy DtoH]
+                    0.28%  2.5072ms         4  626.79us  625.28us  629.53us  [CUDA memset]
+      API calls:   93.20%  8.73786s    163841  53.331us  9.3380us  33.535ms  cudaMemcpy
+                    6.77%  634.54ms        10  63.454ms     982ns  629.43ms  cudaFree
+                    0.02%  1.8785ms         7  268.36us  6.5520us  605.14us  cudaMalloc
+                    0.00%  252.67us         1  252.67us  252.67us  252.67us  cuDeviceTotalMem
+                    0.00%  238.58us         8  29.822us  25.338us  44.083us  cudaLaunchKernel
+                    0.00%  137.09us       169     811ns     631ns  7.7140us  cudaFuncSetAttribute
+                    0.00%  133.69us        97  1.3780us     140ns  57.277us  cuDeviceGetAttribute
+                    0.00%  113.14us         4  28.285us  25.738us  32.220us  cudaMemset
+                    0.00%  33.532us        16  2.0950us     561ns  5.1690us  cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags
+                    0.00%  20.699us         1  20.699us  20.699us  20.699us  cuDeviceGetName
+                    0.00%  15.657us        18     869ns     721ns  1.9740us  cudaEventCreateWithFlags
+                    0.00%  11.292us        18     627ns     481ns  2.0340us  cudaEventDestroy
+                    0.00%  10.799us         4  2.6990us  1.3930us  5.1590us  cudaDeviceSynchronize
+                    0.00%  7.6840us        11     698ns     491ns  1.8840us  cudaDeviceGetAttribute
+                    0.00%  2.8450us         1  2.8450us  2.8450us  2.8450us  cuDeviceGetPCIBusId
+                    0.00%  2.0740us         8     259ns     170ns     501ns  cudaGetLastError
+                    0.00%  1.8540us         1  1.8540us  1.8540us  1.8540us  cudaGetDevice
+                    0.00%  1.2920us         3     430ns     210ns     631ns  cuDeviceGetCount
+                    0.00%     611ns         2     305ns     170ns     441ns  cuDeviceGet
+                    0.00%     270ns         1     270ns     270ns     270ns  cuDeviceGetUuid
+==18289== NVPROF is profiling process 18289, command: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+calculating the answer...
+computation duration: 9626.374023 ms
+==18289== Profiling application: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+==18289== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   63.17%  563.74ms    131073  4.3000us  1.6960us  5.0550us  [CUDA memcpy HtoD]
+                   24.56%  219.21ms         8  27.401ms  25.106ms  31.930ms  turing_s1688gemm_fp16_128x256_ldg8_nn
+                   11.99%  107.01ms     32768  3.2650us  3.1350us  4.3520us  [CUDA memcpy DtoH]
+                    0.28%  2.5072ms         4  626.80us  625.28us  630.20us  [CUDA memset]
+      API calls:   93.18%  8.75746s    163841  53.450us  9.3380us  33.392ms  cudaMemcpy
+                    6.79%  638.09ms        10  63.809ms     661ns  633.00ms  cudaFree
+                    0.01%  1.3932ms         7  199.03us  4.8290us  431.15us  cudaMalloc
+                    0.00%  366.47us         1  366.47us  366.47us  366.47us  cuDeviceTotalMem
+                    0.00%  236.65us         8  29.581us  25.558us  44.072us  cudaLaunchKernel
+                    0.00%  170.32us        97  1.7550us     200ns  70.472us  cuDeviceGetAttribute
+                    0.00%  108.13us         4  27.033us  25.348us  28.874us  cudaMemset
+                    0.00%  101.69us       169     601ns     450ns  5.9420us  cudaFuncSetAttribute
+                    0.00%  31.260us        16  1.9530us     571ns  4.5280us  cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags
+                    0.00%  26.550us         1  26.550us  26.550us  26.550us  cuDeviceGetName
+                    0.00%  12.885us        18     715ns     501ns  2.0540us  cudaEventDestroy
+                    0.00%  11.541us        18     641ns     511ns  1.5730us  cudaEventCreateWithFlags
+                    0.00%  10.850us         4  2.7120us  1.4120us  4.7690us  cudaDeviceSynchronize
+                    0.00%  5.7010us        11     518ns     341ns  1.4620us  cudaDeviceGetAttribute
+                    0.00%  2.6550us         1  2.6550us  2.6550us  2.6550us  cuDeviceGetPCIBusId
+                    0.00%  2.0530us         8     256ns     190ns     541ns  cudaGetLastError
+                    0.00%  1.8040us         3     601ns     421ns     842ns  cuDeviceGetCount
+                    0.00%  1.7740us         1  1.7740us  1.7740us  1.7740us  cudaGetDevice
+                    0.00%  1.0830us         2     541ns     301ns     782ns  cuDeviceGet
+                    0.00%     421ns         1     421ns     421ns     421ns  cuDeviceGetUuid
+==18316== NVPROF is profiling process 18316, command: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+calculating the answer...
+computation duration: 9666.761719 ms
+==18316== Profiling application: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+==18316== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   63.13%  563.85ms    131073  4.3010us  1.2480us  5.0240us  [CUDA memcpy HtoD]
+                   24.62%  219.89ms         8  27.486ms  25.234ms  31.927ms  turing_s1688gemm_fp16_128x256_ldg8_nn
+                   11.97%  106.93ms     32768  3.2630us  3.1350us  4.3520us  [CUDA memcpy DtoH]
+                    0.28%  2.5072ms         4  626.80us  625.47us  629.66us  [CUDA memset]
+      API calls:   93.18%  8.80149s    163841  53.719us  9.2880us  32.808ms  cudaMemcpy
+                    6.79%  641.41ms        10  64.141ms     682ns  636.31ms  cudaFree
+                    0.01%  1.3813ms         7  197.33us  4.5590us  432.31us  cudaMalloc
+                    0.00%  260.58us         1  260.58us  260.58us  260.58us  cuDeviceTotalMem
+                    0.00%  240.19us         8  30.023us  24.125us  42.490us  cudaLaunchKernel
+                    0.00%  133.71us        97  1.3780us     140ns  56.987us  cuDeviceGetAttribute
+                    0.00%  110.95us         4  27.737us  26.510us  28.984us  cudaMemset
+                    0.00%  90.497us       169     535ns     410ns  2.5850us  cudaFuncSetAttribute
+                    0.00%  35.387us        16  2.2110us     531ns  5.4900us  cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags
+                    0.00%  21.239us         1  21.239us  21.239us  21.239us  cuDeviceGetName
+                    0.00%  11.181us        18     621ns     461ns  2.1240us  cudaEventDestroy
+                    0.00%  11.002us        18     611ns     481ns  1.6230us  cudaEventCreateWithFlags
+                    0.00%  10.280us         4  2.5700us  1.3730us  4.7990us  cudaDeviceSynchronize
+                    0.00%  5.6970us        11     517ns     330ns  1.5230us  cudaDeviceGetAttribute
+                    0.00%  2.9950us         1  2.9950us  2.9950us  2.9950us  cuDeviceGetPCIBusId
+                    0.00%  2.0740us         8     259ns     171ns     491ns  cudaGetLastError
+                    0.00%  1.9840us         1  1.9840us  1.9840us  1.9840us  cudaGetDevice
+                    0.00%  1.2220us         3     407ns     290ns     591ns  cuDeviceGetCount
+                    0.00%     712ns         2     356ns     181ns     531ns  cuDeviceGet
+                    0.00%     271ns         1     271ns     271ns     271ns  cuDeviceGetUuid
+==18343== NVPROF is profiling process 18343, command: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+calculating the answer...
+computation duration: 9639.662109 ms
+==18343== Profiling application: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+==18343== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   63.23%  563.81ms    131073  4.3010us  1.5360us  5.0240us  [CUDA memcpy HtoD]
+                   24.49%  218.35ms         8  27.293ms  25.028ms  31.930ms  turing_s1688gemm_fp16_128x256_ldg8_nn
+                   12.00%  106.96ms     32768  3.2640us  3.1350us  4.3520us  [CUDA memcpy DtoH]
+                    0.28%  2.5079ms         4  626.98us  625.63us  630.27us  [CUDA memset]
+      API calls:   93.17%  8.77348s    163841  53.548us  9.6580us  33.061ms  cudaMemcpy
+                    6.80%  639.93ms        10  63.993ms     631ns  634.84ms  cudaFree
+                    0.01%  1.3703ms         7  195.75us  4.8590us  429.97us  cudaMalloc
+                    0.01%  655.54us         1  655.54us  655.54us  655.54us  cuDeviceTotalMem
+                    0.00%  266.11us        97  2.7430us     380ns  108.29us  cuDeviceGetAttribute
+                    0.00%  251.77us         8  31.471us  26.911us  47.018us  cudaLaunchKernel
+                    0.00%  107.25us         4  26.812us  26.159us  28.223us  cudaMemset
+                    0.00%  94.503us       169     559ns     430ns  3.0460us  cudaFuncSetAttribute
+                    0.00%  64.904us        16  4.0560us     561ns  35.537us  cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags
+                    0.00%  46.046us         1  46.046us  46.046us  46.046us  cuDeviceGetName
+                    0.00%  12.985us        18     721ns     541ns  2.3350us  cudaEventDestroy
+                    0.00%  11.321us        18     628ns     490ns  1.6130us  cudaEventCreateWithFlags
+                    0.00%  10.480us         4  2.6200us  1.3630us  4.8190us  cudaDeviceSynchronize
+                    0.00%  5.6710us        11     515ns     340ns  1.5930us  cudaDeviceGetAttribute
+                    0.00%  3.6580us         3  1.2190us     732ns  2.0040us  cuDeviceGetCount
+                    0.00%  3.0560us         1  3.0560us  3.0560us  3.0560us  cuDeviceGetPCIBusId
+                    0.00%  1.8940us         8     236ns     170ns     531ns  cudaGetLastError
+                    0.00%  1.7340us         2     867ns     431ns  1.3030us  cuDeviceGet
+                    0.00%  1.4520us         1  1.4520us  1.4520us  1.4520us  cudaGetDevice
+                    0.00%     681ns         1     681ns     681ns     681ns  cuDeviceGetUuid
+==18370== NVPROF is profiling process 18370, command: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+calculating the answer...
+computation duration: 9617.220703 ms
+==18370== Profiling application: ./cublas_perftest_3 ../../data/output_double_16384.bin 16384 8192
+==18370== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   63.13%  563.64ms    131073  4.3000us  1.3760us  5.0240us  [CUDA memcpy HtoD]
+                   24.59%  219.58ms         8  27.448ms  25.310ms  31.908ms  turing_s1688gemm_fp16_128x256_ldg8_nn
+                   12.00%  107.11ms     32768  3.2680us  2.7840us  4.3520us  [CUDA memcpy DtoH]
+                    0.28%  2.5080ms         4  626.99us  625.66us  630.14us  [CUDA memset]
+      API calls:   93.10%  8.74554s    163841  53.378us  9.4570us  33.198ms  cudaMemcpy
+                    6.87%  645.15ms        10  64.515ms     681ns  640.03ms  cudaFree
+                    0.02%  1.8659ms         7  266.55us  4.3390us  628.06us  cudaMalloc
+                    0.01%  659.85us         1  659.85us  659.85us  659.85us  cuDeviceTotalMem
+                    0.00%  264.64us        97  2.7280us     361ns  108.25us  cuDeviceGetAttribute
+                    0.00%  242.07us         8  30.259us  26.771us  44.773us  cudaLaunchKernel
+                    0.00%  125.42us       169     742ns     421ns  5.7410us  cudaFuncSetAttribute
+                    0.00%  113.01us         4  28.253us  26.290us  31.449us  cudaMemset
+                    0.00%  62.207us         1  62.207us  62.207us  62.207us  cuDeviceGetName
+                    0.00%  30.515us        16  1.9070us     541ns  4.7390us  cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags
+                    0.00%  13.277us        18     737ns     491ns  2.3340us  cudaEventDestroy
+                    0.00%  11.672us         4  2.9180us  1.4120us  5.4100us  cudaDeviceSynchronize
+                    0.00%  11.102us        18     616ns     491ns  1.5330us  cudaEventCreateWithFlags
+                    0.00%  5.3700us        11     488ns     331ns  1.2520us  cudaDeviceGetAttribute
+                    0.00%  3.8180us         3  1.2720us     702ns  2.2740us  cuDeviceGetCount
+                    0.00%  3.1460us         1  3.1460us  3.1460us  3.1460us  cuDeviceGetPCIBusId
+                    0.00%  1.9540us         8     244ns     170ns     531ns  cudaGetLastError
+                    0.00%  1.6230us         2     811ns     431ns  1.1920us  cuDeviceGet
+                    0.00%  1.5530us         1  1.5530us  1.5530us  1.5530us  cudaGetDevice
+                    0.00%     692ns         1     692ns     692ns     692ns  cuDeviceGetUuid
