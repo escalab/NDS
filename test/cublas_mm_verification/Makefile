@@ -13,8 +13,11 @@ default: $(TARGET)
 
 all: $(OBJ) $(TARGET)
 
+lib: cublasGEMM.cu
+	$(NVCC) --compiler-options '-fPIC' -o libcublasGEMM.so --shared cublasGEMM.cu $(NVCC_FLAGS)
+
 $(TARGET): $(SRC)
-	$(NVCC) -o $@ $< $(LD_FLAGS)
+	$(NVCC) -o $@ $< libcublasGEMM.so $(LD_FLAGS) 
 
 %.o: %.cu
 	$(NVCC) -c -o $@ $< $(NVCC_FLAGS)
