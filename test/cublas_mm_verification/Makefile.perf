@@ -1,0 +1,35 @@
+NVCC        = nvcc
+NVCC_FLAGS  = -O3 -I/usr/local/cuda/include  -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
+LD_FLAGS    = -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
+
+LIB=libcublasGEMM.so
+TARGET=cublas_perftest_0 cublas_perftest_1 cublas_perftest_2 cublas_perftest_3 cublas_perftest_4 cublas_perftest_5
+
+ifeq ($(debug),1)
+	LD_FLAGS += -g -DDEBUG
+endif
+
+default: all
+
+all: $(TARGET)
+
+cublas_perftest_0: perftest.cu $(LIB)
+	$(NVCC) -o $@ $^ $(LD_FLAGS) -DALGO=0
+
+cublas_perftest_1: perftest.cu $(LIB)
+	$(NVCC) -o $@ $^ $(LD_FLAGS) -DALGO=1
+
+cublas_perftest_2: perftest.cu $(LIB)
+	$(NVCC) -o $@ $^ $(LD_FLAGS) -DIS_BLOCK_ALGO -DALGO=2
+
+cublas_perftest_3: perftest.cu $(LIB)
+	$(NVCC) -o $@ $^ $(LD_FLAGS) -DIS_BLOCK_ALGO -DALGO=3
+
+cublas_perftest_4: perftest.cu $(LIB)
+	$(NVCC) -o $@ $^ $(LD_FLAGS) -DIS_BLOCK_ALGO -DALGO=4
+
+cublas_perftest_5: perftest.cu $(LIB)
+	$(NVCC) -o $@ $^ $(LD_FLAGS) -DIS_BLOCK_ALGO -DALGO=5
+
+clean:
+	rm -rf $(TARGET)
