@@ -24,14 +24,14 @@ __global__ void h2f_kernel(half *din, float *dout, int dsize) {
 	}
 }
 
-float* tensor_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
-    double *a, double *b, float *c) {
+void tensor_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
     int i, j, k;
     int cross_row = x * sub_k, cross_col = sub_m * sub_k;
     float alpha = 1.0;
     float beta = 1.0;
-    float *a_sub_f, *b_sub_f, *c_sub_f;
     double *a_sub_d, *b_sub_d;
+    float *c_sub_f;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
@@ -39,11 +39,7 @@ float* tensor_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k,
 
     cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
     cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
-    cudaMalloc((void **) &a_sub_f, sizeof(float) * sub_m * sub_k);
-    cudaMalloc((void **) &b_sub_f, sizeof(float) * sub_k * sub_n);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
-
-    int dsize = sub_m * sub_n;
 
     // custom block gemm
     for (i = 0; i < (x / sub_m); i++) {
@@ -53,10 +49,9 @@ float* tensor_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k,
                 // here we can use GPUDirect?
                 cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
                 cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
-                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_f, dsize);
-                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_f, dsize);
                 // async execution (ref: https://forums.developer.nvidia.com/t/async-cublas/2837)
-                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_f, CUDA_R_16F, sub_k, a_sub_f, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                // cudaDataType_t helps users to convert data inside the function call
+                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, Btype, sub_k, a_sub_d, Atype, sub_m, &beta, c_sub_f, Ctype, sub_m, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
             }
             cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
         }
@@ -66,10 +61,17 @@ float* tensor_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k,
 
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
-    cudaFree(a_sub_f);
-    cudaFree(b_sub_f);
     cudaFree(c_sub_f);
-    return c;
+}
+
+void tensor_blockSgemm_half(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {
+    tensor_blockGemmEx(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F);
+}
+
+void tensor_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {
+    tensor_blockGemmEx(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F);
 }
 
 // DON'T USE. Lose precision somewhere.
@@ -124,56 +126,8 @@ float* tensor_blockHgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     return c;
 }
 
-float* tensor_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
-    double *a, double *b, float *c) {
-    int i, j, k;
-    int cross_row = x * sub_k, cross_col = sub_m * sub_k;
-    float alpha = 1.0;
-    float beta = 1.0;
-    float *a_sub_f, *b_sub_f, *c_sub_f;
-    double *a_sub_d, *b_sub_d;
-
-    cublasHandle_t handle;
-    cublasCreate(&handle);
-    cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
-
-    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
-    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
-    cudaMalloc((void **) &a_sub_f, sizeof(float) * sub_m * sub_k);
-    cudaMalloc((void **) &b_sub_f, sizeof(float) * sub_k * sub_n);
-    cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
-
-    int dsize = sub_m * sub_n;
-
-    // custom block gemm
-    for (i = 0; i < (x / sub_m); i++) {
-        for (j = 0; j < (y / sub_n); j++) {
-            cudaMemset(c_sub_f, 0, sub_m * sub_n * sizeof(float));
-            for (k = 0; k < (z / sub_k); k++) {
-                // here we can use GPUDirect?
-                cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
-                cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
-                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_f, dsize);
-                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_f, dsize);
-                // async execution (ref: https://forums.developer.nvidia.com/t/async-cublas/2837)
-                cublasSgemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_f, CUDA_R_16F, sub_k, a_sub_f, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m);
-            }
-            cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
-        }
-    }
-
-    cublasDestroy(handle);
-
-    cudaFree(a_sub_d);
-    cudaFree(b_sub_d);
-    cudaFree(a_sub_f);
-    cudaFree(b_sub_f);
-    cudaFree(c_sub_f);
-    return c;
-}
-
-float* tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
-    double *a, double *b, float *c) {
+void tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {    
     int i, j, k;
     int cross_row = x * sub_k, cross_col = sub_m * sub_k;
     double alpha = 1.0;
@@ -182,7 +136,6 @@ float* tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     float *c_sub_f;
     cublasHandle_t handle;
     cublasCreate(&handle);
-
 
     cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
     cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
@@ -212,17 +165,15 @@ float* tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     cudaFree(b_sub_d);
     cudaFree(c_sub_d);
     cudaFree(c_sub_f);
-
-    return c;
 }
 
-float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
-    double *a, double *b, float *c) {
+void sequential_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
     int i, j, k, ii, kk, i_idx, k_idx;
     float alpha = 1.0;
     float beta = 1.0;
     double *a_sub_d, *b_sub_d;
-    float *a_sub_f, *b_sub_f, *c_sub_f;
+    float *c_sub_f;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
@@ -230,11 +181,7 @@ float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_
 
     cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
     cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
-    cudaMalloc((void **) &a_sub_f, sizeof(float) * sub_m * sub_k);
-    cudaMalloc((void **) &b_sub_f, sizeof(float) * sub_k * sub_n);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
-
-    int dsize = sub_m * sub_n;
 
     for (i = 0; i < x; i += sub_m) {
         for (j = 0; j < y; j += sub_n) {
@@ -247,9 +194,6 @@ float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_
                 for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
                     cudaMemcpy((b_sub_d + k_idx * sub_n), (b + kk * y + j), sub_n * sizeof(double), cudaMemcpyHostToDevice);
                 }
-
-                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_f, dsize);
-                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_f, dsize);
                 // cublasDgemm EXPLANATION ------------------------------------------------
                 // the memory layout is different from we know
                 // a = [0 1; b = [3 2; 
@@ -257,8 +201,7 @@ float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_
                 // if use a_d then b_d, c[0][0] will be a[0, 0] * b[0, 0] + a[1, 0] * b[0, 1] = 4
                 // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
                 // maybe that's because inside GPU it uses column major storage.
-                cublasSgemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_f, CUDA_R_16F, sub_k, a_sub_f, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m);
-                // cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_f, sub_k, a_sub_f, sub_m, &beta, c_sub_f, sub_m);
+                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, Btype, sub_k, a_sub_d, Atype, sub_m, &beta, c_sub_f, Ctype, sub_m, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
             }
             for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
                 cudaMemcpy((c + ii * y + j), (c_sub_f + i_idx * sub_n), sub_n * sizeof(float), cudaMemcpyDeviceToHost);
@@ -270,14 +213,20 @@ float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_
 
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
-    cudaFree(a_sub_f);
-    cudaFree(b_sub_f);
     cudaFree(c_sub_f);
-
-    return c;
 }
 
-float* sequential_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+void sequential_blockSgemm_half(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {
+    sequential_blockGemmEx(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F);
+}
+
+void sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {
+    sequential_blockGemmEx(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F);
+}
+
+void sequential_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
     double *a, double *b, float *c) {
     int i, j, k, ii, kk, i_idx, k_idx;
     double alpha = 1.0;
@@ -328,8 +277,6 @@ float* sequential_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_
     cudaFree(b_sub_d);
     cudaFree(c_sub_d);
     cudaFree(c_sub_f);
-
-    return c;
 }
 
 // DON'T USE. Lose precision somewhere.
@@ -378,12 +325,11 @@ float* wholeMatrixHgemm(int m, int n, int k, const double *a, const double *b, f
     return c;
 }
 
-float* wholeMatrixSgemm(int m, int n, int k, const double *a, const double *b, float *c) {
+void wholeMatrix_GemmEx(int m, int n, int k, const double *a, const double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
     float alpha = 1.0;
     float beta = 0.0;
     double *a_d, *b_d;
-    float *a_f, *b_f, *c_f;
-    int dsize = m * n;
+    float *c_f;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
@@ -391,18 +337,11 @@ float* wholeMatrixSgemm(int m, int n, int k, const double *a, const double *b, f
 
     cudaMalloc((void **) &a_d, sizeof(double) * m * k);
     cudaMalloc((void **) &b_d, sizeof(double) * k * n);
-    cudaMalloc((void **) &a_f, sizeof(float) * m * k);
-    cudaMalloc((void **) &b_f, sizeof(float) * k * n);
     cudaMalloc((void **) &c_f, sizeof(float) * m * n);
 
     cudaMemcpy(a_d, a, sizeof(double) * m * k, cudaMemcpyHostToDevice);
     cudaMemcpy(b_d, b, sizeof(double) * k * n, cudaMemcpyHostToDevice);
 
-    d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_d, a_f, dsize);
-    d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_d, b_f, dsize);
-
-    cudaFree(a_d);
-    cudaFree(b_d);
     // cublasDgemm EXPLANATION ------------------------------------------------
     // the memory layout is different from we know
     // a = [0 1; b = [3 2; 
@@ -411,20 +350,26 @@ float* wholeMatrixSgemm(int m, int n, int k, const double *a, const double *b, f
     // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
     // maybe that's because inside GPU it uses column major storage.
     // cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, b_f, CUDA_R_16F, k, a_f, CUDA_R_16F, m, &beta, c_f, CUDA_R_32F, m);
-    cublasSgemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, b_f, CUDA_R_16F, k, a_f, CUDA_R_16F, m, &beta, c_f, CUDA_R_32F, m);
-
-    cudaFree(a_f);
-    cudaFree(b_f);
+    cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, b_d, Btype, k, a_d, Atype, m, &beta, c_f, Ctype, m, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+    cudaFree(a_d);
+    cudaFree(b_d);
 
     cudaMemcpy(c, c_f, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
     
     cublasDestroy(handle);
 
     cudaFree(c_f);
-    return c;
 }
 
-float* wholeMatrixDgemm(int m, int n, int k, const double *a, const double *b, float *c) {
+void wholeMatrix_Sgemm_half(int m, int n, int k, const double *a, const double *b, float *c) {
+    wholeMatrix_GemmEx(m, n, k, a, b, c, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F);
+}
+
+void wholeMatrix_Sgemm(int m, int n, int k, const double *a, const double *b, float *c) {
+    wholeMatrix_GemmEx(m, n, k, a, b, c, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F);
+}
+
+void wholeMatrix_Dgemm(int m, int n, int k, const double *a, const double *b, float *c) {
     double alpha = 1.0;
     double beta = 0.0;
     double *a_d, *b_d, *c_d;
@@ -460,5 +405,4 @@ float* wholeMatrixDgemm(int m, int n, int k, const double *a, const double *b, f
 
     cudaFree(c_d);
     cudaFree(c_f);
-    return c;
 }
