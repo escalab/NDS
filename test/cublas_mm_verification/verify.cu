@@ -1,8 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
-#include <cuda_runtime.h>
-#include "cublas_v2.h"
 #include "cublasGEMM.h"
 
 // for mmap
@@ -12,9 +9,6 @@
 
 // for timing
 #include <sys/time.h>
-
-#define THREADS_PER_BLOCK 256
-#define ITER_NUM 1
 
 // this one is good because it only takes one element space
 int cpu_verify(double *A, double *B, float *C, unsigned int m, unsigned int n, unsigned int k) {
@@ -96,24 +90,20 @@ int main(int argc, char** argv) {
     answer_c = (float *) calloc(n * n, sizeof(float));
 
     printf("calculating the answer...\n");
-    for (int i = 0; i < ITER_NUM; i++) {
-        memset(answer_c, 0, n * n * sizeof(float));
-        gettimeofday(&h_start, NULL);
-        wholeMatrixSgemm(n, n, n, a, b, answer_c);
-        gettimeofday(&h_end, NULL);
-        duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-        printf("sequential format GEMM duration: %f ms\n", (float) duration / 1000);    
-    }
+    memset(answer_c, 0, n * n * sizeof(float));
+    gettimeofday(&h_start, NULL);
+    wholeMatrix_Dgemm(n, n, n, a, b, answer_c);
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("sequential format GEMM duration: %f ms\n", (float) duration / 1000);    
 
     printf("calculating the result of the sequential format\n");
-    for (int i = 0; i < ITER_NUM; i++) {
-        memset(c, 0, n * n * sizeof(float));
-        gettimeofday(&h_start, NULL);
-        sequential_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
-        gettimeofday(&h_end, NULL);
-        duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-        printf("sequential format block-GEMM duration: %f ms\n", (float) duration / 1000);    
-    }
+    memset(c, 0, n * n * sizeof(float));
+    gettimeofday(&h_start, NULL);
+    sequential_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("sequential format block-GEMM duration: %f ms\n", (float) duration / 1000);    
 
 #ifdef DEBUG
     int i, j;
@@ -154,14 +144,13 @@ int main(int argc, char** argv) {
 
     // GEMM configuration.
     printf("calculating the result of the tensor format\n");
-    for (int i = 0; i < ITER_NUM; i++) {
-        memset(c, 0, n * n * sizeof(float));
-        gettimeofday(&h_start, NULL);
-        tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
-        gettimeofday(&h_end, NULL);
-        duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-        printf("tensor format block-GEMM duration: %f ms\n", (float) duration / 1000);
-    }
+    memset(c, 0, n * n * sizeof(float));
+    gettimeofday(&h_start, NULL);
+    tensor_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("tensor format block-GEMM duration: %f ms\n", (float) duration / 1000);
+    
     printf("Reformat from tensor to sequential...\n");
     int count = 0;
     gettimeofday(&h_start, NULL);
@@ -213,7 +202,7 @@ int main(int argc, char** argv) {
         FILE *fptr;
         sprintf(filename, "ans_block_%d_%d.bin", n, sub_n);
         fptr = fopen(filename, "wb");
-        printf("writing sequential answer to %s\n", filename);
+        printf("writing tensor format answer to %s\n", filename);
         fwrite(c, sizeof(float), n * n, fptr);
     }
 
