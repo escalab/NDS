@@ -19,11 +19,12 @@ lib: cublasGEMM.cu
 cublas_gemm_verification: verify.cu
 	$(NVCC) -o $@ $< $(LIB) $(LD_FLAGS) 
 
-cublas_perftest: perftest.cu
-	$(NVCC) -o $@ $< $(LIB) $(LD_FLAGS) 
+cublas_perftest: 
+	make -f Makefile.perf all
 
 clean:
-	rm -rf cublas_perftest cublas_gemm_verification $(LIB)
+	make -f Makefile.perf clean
+	rm -rf cublas_gemm_verification $(LIB)
 
 clean_answer:
 	rm -rf *.bin
