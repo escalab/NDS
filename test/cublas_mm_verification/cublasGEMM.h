@@ -12,6 +12,7 @@ __global__ void d2f_kernel(double *din, float *dout, int dsize);
 __global__ void d2h_kernel(double *din, half *dout, int dsize);
 __global__ void h2f_kernel(half *din, float *dout, int dsize);
 
+float* tensor_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k, double *a, double *b, float *c);
 float* tensor_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, double *a, double *b, float *c);
 float* tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, double *a, double *b, float *c);
 float* sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, double *a, double *b, float *c);

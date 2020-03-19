@@ -24,6 +24,54 @@ __global__ void h2f_kernel(half *din, float *dout, int dsize) {
 	}
 }
 
+float* tensor_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+    double *a, double *b, float *c) {
+    int i, j, k;
+    int cross_row = x * sub_k, cross_col = sub_m * sub_k;
+    float alpha = 1.0;
+    float beta = 1.0;
+    float *a_sub_f, *b_sub_f, *c_sub_f;
+    double *a_sub_d, *b_sub_d;
+
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+    cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
+
+    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
+    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
+    cudaMalloc((void **) &a_sub_f, sizeof(float) * sub_m * sub_k);
+    cudaMalloc((void **) &b_sub_f, sizeof(float) * sub_k * sub_n);
+    cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
+
+    int dsize = sub_m * sub_n;
+
+    // custom block gemm
+    for (i = 0; i < (x / sub_m); i++) {
+        for (j = 0; j < (y / sub_n); j++) {
+            cudaMemset(c_sub_f, 0, sub_m * sub_n * sizeof(float));
+            for (k = 0; k < (z / sub_k); k++) {
+                // here we can use GPUDirect?
+                cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
+                cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_f, dsize);
+                d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_f, dsize);
+                // async execution (ref: https://forums.developer.nvidia.com/t/async-cublas/2837)
+                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_f, CUDA_R_16F, sub_k, a_sub_f, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+            }
+            cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
+        }
+    }
+
+    cublasDestroy(handle);
+
+    cudaFree(a_sub_d);
+    cudaFree(b_sub_d);
+    cudaFree(a_sub_f);
+    cudaFree(b_sub_f);
+    cudaFree(c_sub_f);
+    return c;
+}
+
 // DON'T USE. Lose precision somewhere.
 float* tensor_blockHgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
     double *a, double *b, float *c) {
