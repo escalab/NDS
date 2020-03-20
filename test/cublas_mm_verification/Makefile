@@ -1,9 +1,9 @@
-NVCC        = nvcc
-NVCC_FLAGS  = -O3 -I/usr/local/cuda/include  -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
-LD_FLAGS    = -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
+NVCC = nvcc
+LD_FLAGS = -O3 -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
+LD_FLAGS += -I../../lib/gemm -L../../lib/gemm -lcublasGEMM
 
-LIB=libcublasGEMM.so
-
+TARGET=cublas_gemm_verification
+SRC=verify.cu
 
 ifeq ($(debug),1)
 	LD_FLAGS += -g -DDEBUG
@@ -11,20 +11,13 @@ endif
 
 default: all
 
-all: lib cublas_gemm_verification cublas_perftest
+all: $(TARGET)
 
-lib: cublasGEMM.cu
-	$(NVCC) --compiler-options '-fPIC' -o $(LIB) --shared cublasGEMM.cu $(NVCC_FLAGS)
-
-cublas_gemm_verification: verify.cu
-	$(NVCC) -o $@ $< $(LIB) $(LD_FLAGS) 
-
-cublas_perftest: 
-	make -f Makefile.perf all
+$(TARGET): $(SRC)
+	$(NVCC) -o $@ $< $(LD_FLAGS) 
 
 clean:
-	make -f Makefile.perf clean
-	rm -rf cublas_gemm_verification $(LIB)
+	rm -rf $(TARGET)
 
 clean_answer:
 	rm -rf *.bin
