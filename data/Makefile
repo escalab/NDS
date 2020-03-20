@@ -1,5 +1,6 @@
 CC=gcc
-CFLAGS=-O3
+CFLAGS=-O3 
+LD_FLAGS = -I../lib/tensorstore -L../lib/tensorstore -ltensorstore
 
 ifeq ($(debug),1)
 	CFLAGS += -g -DDEBUG
@@ -8,7 +9,7 @@ endif
 all: datagen_double datagen_long
 
 datagen_double: datagen_double.c
-	$(CC) $(CFLAGS) -o $@ $< 
+	$(CC) $(CFLAGS) -o $@ $< $(LD_FLAGS)
 
 datagen_long: datagen_long.c
 	$(CC) $(CFLAGS) -o $@ $< 

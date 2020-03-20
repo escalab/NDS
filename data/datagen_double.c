@@ -1,60 +1,62 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <unistd.h>
+
+#include <sys/mman.h>
+
+#include "tensorstore.h"
 
 int main(int argc, char** argv) {
     int i, j, ii, jj, n, sub_n;
-    FILE *fptr;
-    double **output_matrix;
-    double *submatrix;
+    int seq_fd, tensor_fd;
+    double *seq_matrix;
+    double *tensor_matrix;
     int idx;
-    
-    if (argc < 4) {
-        printf("usage: %s <normal output path> <block output path> <matrix size> <submatrix size>\n", argv[0]);
+    int ret;
+    int dsize = 0;
+    if (argc < 5) {
+        printf("usage: %s <normal output path> <block output path> <matrix size> <tensor_matrix size>\n", argv[0]);
         return 1;
     }
 
     srand(5);
 
-    fptr = fopen(argv[1], "w");
+    seq_fd = open(argv[1], O_RDWR | O_CREAT | O_TRUNC, 0644);
+    tensor_fd = open(argv[2], O_RDWR | O_CREAT | O_TRUNC, 0644);
     n = atoi(argv[3]);
     sub_n = atoi(argv[4]);
 
-    output_matrix = (double **) malloc(n * sizeof(double *));
-    submatrix = (double *) malloc(sub_n * sub_n * sizeof(double));
-    
-    for (i = 0; i < n; i++) {
-        output_matrix[i] = (double *) malloc(n * sizeof(double));
-        for (j = 0; j < n; j++) {
-            output_matrix[i][j] = (double) rand() / RAND_MAX;
-            fwrite(&(output_matrix[i][j]), sizeof(double), 1, fptr);
-        }
+    dsize = sizeof(double) * n * n;
+
+    ret = posix_fallocate(seq_fd, 0, dsize);
+    if (ret != 0) {
+        printf("fallocate error code: %d\n", ret);
+        exit(ret);
     }
 
-    fclose(fptr);
+    ret = posix_fallocate(tensor_fd, 0, dsize);
+    if (ret != 0) {
+        printf("fallocate error code: %d\n", ret);
+        exit(ret);
+    }
 
-    fptr = fopen(argv[2], "w");
+    // MAP_SHARED committed back to the original file but MAP_PRIVATE only writes to memory.
+    // ref: https://stackoverflow.com/questions/9519648/what-is-the-difference-between-map-shared-and-map-private-in-the-mmap-function
+    seq_matrix = (double *) mmap(NULL, dsize, PROT_READ | PROT_WRITE, MAP_SHARED, seq_fd, 0);
+    tensor_matrix = (double *) mmap(NULL, dsize, PROT_READ | PROT_WRITE, MAP_SHARED, tensor_fd, 0);
+    
+    for (i = 0; i < n * n; i++) {
+        seq_matrix[i] = (double) rand() / RAND_MAX;
+    }
+    msync(seq_matrix, dsize, MS_SYNC);
 
-    for(i = 0; i < n; i+= sub_n) {
-        for(j = 0; j < n; j+= sub_n) {  
-            idx = 0;     
-            for(ii = i; ii < i+sub_n; ii++) {
-                for(jj = j; jj < j+sub_n; jj++) {
-                    submatrix[idx] = output_matrix[ii][jj];
-                    idx++;
-                }
-            }
-            fwrite(submatrix, sizeof(double), sub_n * sub_n, fptr);
-        }
-    }  
+    seq2tensor(seq_matrix, tensor_matrix, n, n, sub_n, sub_n);
 
-    fclose(fptr);
-    for (i = 0; i < n; i++) {
-        free(output_matrix[i]);
-    }    
-    free(output_matrix);
-
-    free(submatrix);
-
+    msync(tensor_matrix, dsize, MS_SYNC);
+    munmap(seq_matrix, dsize);
+    munmap(tensor_matrix, dsize);
+    close(seq_fd);
+    close(tensor_fd);
     return 0;
 }
