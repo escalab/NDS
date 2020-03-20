@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
     double *tensor_matrix;
     int idx;
     int ret;
-    int dsize = 0;
+    size_t dsize = 0;
     if (argc < 5) {
         printf("usage: %s <normal output path> <block output path> <matrix size> <tensor_matrix size>\n", argv[0]);
         return 1;
