@@ -21,38 +21,16 @@ void seq2tensor(double *seq_matrix, double *tensor_matrix, int m, int n, int sub
     }  
 }
 
-int main(void) {
-    int m = 8;
-    int sub_m = 2;
-    int i, j;
-    double *seq_matrix, *tensor_matrix;
-    seq_matrix = (double *) malloc(sizeof(double) * m * m);
-    tensor_matrix = (double *) calloc(m * m, sizeof(double));
-
-    for (i = 0; i < m; i++) {
-        for (j = 0; j < m; j++) {
-            seq_matrix[i * m + j] = i * m + j;
+void tensor2seq(double *tensor_matrix, double *seq_matrix, int m, int n, int sub_m, int sub_n) {
+    int count = 0;
+    for (int i = 0; i < n; i += sub_n) {
+        for (int j = 0; j < n; j += sub_n) {  
+            for(int ii = i; ii < i + sub_n; ii++) {
+                for(int jj = j; jj < j + sub_n; jj++) {
+                    seq_matrix[ii * n + jj] = tensor_matrix[count];
+                    count++;
+                }
+            }
         }
     }
-
-    seq2tensor(seq_matrix, tensor_matrix, m, m, sub_m, sub_m);
-
-    printf("result of seq_matrix\n");
-    for (i = 0; i < m; i++) {
-        for (j = 0; j < m; j++) {
-            printf("%.0f ", seq_matrix[i * m + j]);
-        }
-        printf("\n");
-    }
-
-    printf("result of tensor_matrix\n");
-    for (i = 0; i < m; i++) {
-        for (j = 0; j < m; j++) {
-            printf("%.0f ", tensor_matrix[i * m + j]);
-        }
-        printf("\n");
-    }
-    free(seq_matrix);
-    free(tensor_matrix);
-    return 0;
 }
