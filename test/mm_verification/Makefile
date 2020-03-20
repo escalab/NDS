@@ -1,14 +1,20 @@
 CC=g++
 CFLAGS=-O3
 
+SRC=main.cpp
+TARGET=main
+
 ifeq ($(debug),1)
 	CFLAGS += -g -DDEBUG
 endif
 
-all: main
+all: $(TARGET)
 
-main: main.cpp
+$(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $@ $< 
 
 clean:
-	rm -rf main
+	rm -rf $(TARGET)
+
+clean_answer:
+	rm -rf *.bin
