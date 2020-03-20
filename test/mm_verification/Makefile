@@ -2,7 +2,7 @@ CC=g++
 CFLAGS=-O3
 
 SRC=main.cpp
-TARGET=main
+TARGET=cpu_mm_verification
 
 ifeq ($(debug),1)
 	CFLAGS += -g -DDEBUG
