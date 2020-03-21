@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-O3 
+CFLAGS=-O3 -Wall
 LD_FLAGS = -I../lib/tensorstore -L../lib/tensorstore -ltensorstore
 
 ifeq ($(debug),1)

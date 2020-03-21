@@ -8,11 +8,10 @@
 #include "tensorstore.h"
 
 int main(int argc, char** argv) {
-    int i, j, ii, jj, n, sub_n;
+    long long i, n, sub_n;
     int seq_fd, tensor_fd;
     double *seq_matrix;
     double *tensor_matrix;
-    int idx;
     int ret;
     size_t dsize = 0;
     if (argc < 5) {
@@ -24,8 +23,8 @@ int main(int argc, char** argv) {
 
     seq_fd = open(argv[1], O_RDWR | O_CREAT | O_TRUNC, 0644);
     tensor_fd = open(argv[2], O_RDWR | O_CREAT | O_TRUNC, 0644);
-    n = atoi(argv[3]);
-    sub_n = atoi(argv[4]);
+    n = atoll(argv[3]);
+    sub_n = atoll(argv[4]);
 
     dsize = sizeof(double) * n * n;
 
@@ -46,11 +45,13 @@ int main(int argc, char** argv) {
     seq_matrix = (double *) mmap(NULL, dsize, PROT_READ | PROT_WRITE, MAP_SHARED, seq_fd, 0);
     tensor_matrix = (double *) mmap(NULL, dsize, PROT_READ | PROT_WRITE, MAP_SHARED, tensor_fd, 0);
     
+    printf("assigning seq_matrix\n");
     for (i = 0; i < n * n; i++) {
         seq_matrix[i] = (double) rand() / RAND_MAX;
     }
     msync(seq_matrix, dsize, MS_SYNC);
 
+    printf("assigning tensor_matrix\n");
     seq2tensor(seq_matrix, tensor_matrix, n, n, sub_n, sub_n);
 
     msync(tensor_matrix, dsize, MS_SYNC);
