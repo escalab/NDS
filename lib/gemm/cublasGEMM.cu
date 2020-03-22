@@ -1,33 +1,33 @@
 #include "cublasGEMM.h"
 
-__global__ void d2f_kernel(const double *din, float *dout, int dsize) {
-	int idx = threadIdx.x+blockDim.x*blockIdx.x;
+__global__ void d2f_kernel(const double *din, float *dout, size_t dsize) {
+	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
 	if (idx < dsize)
 	{
 		dout[idx] = din[idx];
 	}
 }
 
-__global__ void d2h_kernel(const double *din, half *dout, int dsize) {
-	int idx = threadIdx.x+blockDim.x*blockIdx.x;
+__global__ void d2h_kernel(const double *din, half *dout, size_t dsize) {
+	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
 	if (idx < dsize)
 	{
 		dout[idx] = din[idx];
 	}
 }
 
-__global__ void h2f_kernel(half *din, float *dout, int dsize) {
-	int idx = threadIdx.x+blockDim.x*blockIdx.x;
+__global__ void h2f_kernel(half *din, float *dout, size_t dsize) {
+	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
 	if (idx < dsize)
 	{
 		dout[idx] = din[idx];
 	}
 }
 
-void tensor_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+void tensor_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
-    int i, j, k;
-    int cross_row = x * sub_k, cross_col = sub_m * sub_k;
+    size_t i, j, k;
+    size_t cross_row = x * sub_k, cross_col = sub_m * sub_k;
     float alpha = 1.0;
     float beta = 1.0;
     double *a_sub_d, *b_sub_d;
@@ -64,21 +64,21 @@ void tensor_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     cudaFree(c_sub_f);
 }
 
-void tensor_blockSgemm_half(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+void tensor_blockSgemm_half(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c) {
     tensor_blockGemmEx(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F);
 }
 
-void tensor_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+void tensor_blockSgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c) {
     tensor_blockGemmEx(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F);
 }
 
 // DON'T USE. Lose precision somewhere.
-float* tensor_blockHgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+float* tensor_blockHgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c) {
-    int i, j, k;
-    int cross_row = x * sub_k, cross_col = sub_m * sub_k;
+    size_t i, j, k;
+    size_t cross_row = x * sub_k, cross_col = sub_m * sub_k;
     half alpha = 1.0;
     half beta = 1.0;
     half *a_sub_h, *b_sub_h, *c_sub_h;
@@ -95,7 +95,7 @@ float* tensor_blockHgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     cudaMalloc((void **) &b_sub_h, sizeof(half) * sub_k * sub_n);
     cudaMalloc((void **) &c_sub_h, sizeof(half) * sub_m * sub_n);
 
-    int dsize = sub_m * sub_n;
+    size_t dsize = sub_m * sub_n;
 
     // custom block gemm
     for (i = 0; i < (x / sub_m); i++) {
@@ -126,10 +126,10 @@ float* tensor_blockHgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     return c;
 }
 
-void tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+void tensor_blockDgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c) {    
-    int i, j, k;
-    int cross_row = x * sub_k, cross_col = sub_m * sub_k;
+    size_t i, j, k;
+    size_t cross_row = x * sub_k, cross_col = sub_m * sub_k;
     double alpha = 1.0;
     double beta = 1.0;
     double *a_sub_d, *b_sub_d, *c_sub_d;
@@ -142,7 +142,7 @@ void tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
 
-    int dsize = sub_m * sub_n;
+    size_t dsize = sub_m * sub_n;
 
     // custom block gemm
     for (i = 0; i < (x / sub_m); i++) {
@@ -167,9 +167,9 @@ void tensor_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     cudaFree(c_sub_f);
 }
 
-void sequential_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
-    int i, j, k, ii, kk, i_idx, k_idx;
+    size_t i, j, k, ii, kk, i_idx, k_idx;
     float alpha = 1.0;
     float beta = 1.0;
     double *a_sub_d, *b_sub_d;
@@ -216,19 +216,19 @@ void sequential_blockGemmEx(int x, int y, int z, int sub_m, int sub_n, int sub_k
     cudaFree(c_sub_f);
 }
 
-void sequential_blockSgemm_half(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+void sequential_blockSgemm_half(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c) {
     sequential_blockGemmEx(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F);
 }
 
-void sequential_blockSgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+void sequential_blockSgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c) {
     sequential_blockGemmEx(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F);
 }
 
-void sequential_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k, 
+void sequential_blockDgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c) {
-    int i, j, k, ii, kk, i_idx, k_idx;
+    size_t i, j, k, ii, kk, i_idx, k_idx;
     double alpha = 1.0;
     double beta = 1.0;
     double *a_sub_d, *b_sub_d, *c_sub_d;
@@ -242,7 +242,7 @@ void sequential_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
     cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_m * sub_n);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
 
-    int dsize = sub_m * sub_n;
+    size_t dsize = sub_m * sub_n;
 
     for (i = 0; i < x; i += sub_m) {
         for (j = 0; j < y; j += sub_n) {
@@ -280,13 +280,13 @@ void sequential_blockDgemm(int x, int y, int z, int sub_m, int sub_n, int sub_k,
 }
 
 // DON'T USE. Lose precision somewhere.
-float* wholeMatrixHgemm(int m, int n, int k, const double *a, const double *b, float *c) {
+float* wholeMatrixHgemm(size_t m, size_t n, size_t k, const double *a, const double *b, float *c) {
     half alpha = 1.0;
     half beta = 0.0;
     double *a_d, *b_d;
     half *a_h, *b_h, *c_h;
     float *c_f;
-    int dsize = m * n;
+    size_t dsize = m * n;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
@@ -325,7 +325,7 @@ float* wholeMatrixHgemm(int m, int n, int k, const double *a, const double *b, f
     return c;
 }
 
-void wholeMatrix_GemmEx(int m, int n, int k, const double *a, const double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
+void wholeMatrix_GemmEx(size_t m, size_t n, size_t k, const double *a, const double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
     float alpha = 1.0;
     float beta = 0.0;
     double *a_d, *b_d;
@@ -361,20 +361,20 @@ void wholeMatrix_GemmEx(int m, int n, int k, const double *a, const double *b, f
     cudaFree(c_f);
 }
 
-void wholeMatrix_Sgemm_half(int m, int n, int k, const double *a, const double *b, float *c) {
+void wholeMatrix_Sgemm_half(size_t m, size_t n, size_t k, const double *a, const double *b, float *c) {
     wholeMatrix_GemmEx(m, n, k, a, b, c, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F);
 }
 
-void wholeMatrix_Sgemm(int m, int n, int k, const double *a, const double *b, float *c) {
+void wholeMatrix_Sgemm(size_t m, size_t n, size_t k, const double *a, const double *b, float *c) {
     wholeMatrix_GemmEx(m, n, k, a, b, c, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F);
 }
 
-void wholeMatrix_Dgemm(int m, int n, int k, const double *a, const double *b, float *c) {
+void wholeMatrix_Dgemm(size_t m, size_t n, size_t k, const double *a, const double *b, float *c) {
     double alpha = 1.0;
     double beta = 0.0;
     double *a_d, *b_d, *c_d;
     float *c_f;
-    int dsize = m * n;
+    size_t dsize = m * n;
 
     cublasHandle_t handle;
     cublasCreate(&handle);

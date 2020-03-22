@@ -26,13 +26,13 @@
 int main(int argc, char** argv) {
     double *a, *b;
     float *c;
-    int n;
+    long long n;
     int a_fd, b_fd;
     struct timeval h_start, h_end;
     long duration;
-
+    
 #ifdef IS_BLOCK_ALGO
-    int sub_n;
+    long long sub_n;
     if (argc < 4) {
         printf("usage: %s <matrix path> <matrix size> <submatrix size>\n", argv[0]);
         exit(1);
