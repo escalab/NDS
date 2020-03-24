@@ -32,6 +32,8 @@ void tensor_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n
     float beta = 1.0;
     double *a_sub_d, *b_sub_d;
     float *c_sub_f;
+    struct timeval h_start, h_end;
+    long h2d_time = 0, d2h_time = 0, kernel_time = 0;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
@@ -47,13 +49,23 @@ void tensor_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n
             cudaMemset(c_sub_f, 0, sub_m * sub_n * sizeof(float));
             for (k = 0; k < (z / sub_k); k++) {
                 // here we can use GPUDirect?
+                gettimeofday(&h_start, NULL);
                 cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
                 cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+                gettimeofday(&h_end, NULL);
+                h2d_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
                 // async execution (ref: https://forums.developer.nvidia.com/t/async-cublas/2837)
                 // cudaDataType_t helps users to convert data inside the function call
+                gettimeofday(&h_start, NULL);
                 cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, Btype, sub_k, a_sub_d, Atype, sub_m, &beta, c_sub_f, Ctype, sub_m, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                cudaDeviceSynchronize();
+                gettimeofday(&h_end, NULL);
+                kernel_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
             }
+            gettimeofday(&h_start, NULL);
             cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost);
+            gettimeofday(&h_end, NULL);
+            d2h_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
         }
     }
 
@@ -62,6 +74,9 @@ void tensor_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
     cudaFree(c_sub_f);
+    printf("h2d time: %f ms\n", (float) h2d_time / 1000);
+    printf("kernel time: %f ms\n", (float) kernel_time / 1000);
+    printf("d2h time: %f ms\n", (float) d2h_time / 1000);
 }
 
 void tensor_blockSgemm_half(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
@@ -174,6 +189,8 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     float beta = 1.0;
     double *a_sub_d, *b_sub_d;
     float *c_sub_f;
+    struct timeval h_start, h_end;
+    long h2d_time = 0, d2h_time = 0, kernel_time = 0;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
@@ -187,6 +204,7 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
         for (j = 0; j < y; j += sub_n) {
             cudaMemset(c_sub_f, 0, sub_m * sub_n * sizeof(float));
             for (k = 0; k < z; k += sub_k) {
+                gettimeofday(&h_start, NULL);
                 for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
                     cudaMemcpy((a_sub_d + i_idx * sub_n), (a + ii*y + k), sub_k * sizeof(double), cudaMemcpyHostToDevice);
                 }
@@ -194,6 +212,8 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
                 for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
                     cudaMemcpy((b_sub_d + k_idx * sub_n), (b + kk * y + j), sub_n * sizeof(double), cudaMemcpyHostToDevice);
                 }
+                gettimeofday(&h_end, NULL);
+                h2d_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
                 // cublasDgemm EXPLANATION ------------------------------------------------
                 // the memory layout is different from we know
                 // a = [0 1; b = [3 2; 
@@ -201,11 +221,18 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
                 // if use a_d then b_d, c[0][0] will be a[0, 0] * b[0, 0] + a[1, 0] * b[0, 1] = 4
                 // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
                 // maybe that's because inside GPU it uses column major storage.
+                gettimeofday(&h_start, NULL);
                 cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, Btype, sub_k, a_sub_d, Atype, sub_m, &beta, c_sub_f, Ctype, sub_m, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                cudaDeviceSynchronize();
+                gettimeofday(&h_end, NULL);
+                kernel_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
             }
+            gettimeofday(&h_start, NULL);
             for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
                 cudaMemcpy((c + ii * y + j), (c_sub_f + i_idx * sub_n), sub_n * sizeof(float), cudaMemcpyDeviceToHost);
-            }                
+            }   
+            gettimeofday(&h_end, NULL);
+            d2h_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);              
         }
     }  
     
@@ -214,6 +241,9 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
     cudaFree(c_sub_f);
+    printf("h2d time: %f ms\n", (float) h2d_time / 1000);
+    printf("kernel time: %f ms\n", (float) kernel_time / 1000);
+    printf("d2h time: %f ms\n", (float) d2h_time / 1000);
 }
 
 void sequential_blockSgemm_half(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 

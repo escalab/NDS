@@ -6,6 +6,9 @@
 #include <cuda_runtime.h>
 #include "cublas_v2.h"
 
+// timing
+#include <sys/time.h>
+
 #define THREADS_PER_BLOCK 256
 
 __global__ void d2f_kernel(const double *din, float *dout, size_t dsize);
