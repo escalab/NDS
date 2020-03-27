@@ -199,33 +199,38 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     float *c_sub_f;
     struct timeval h_start, h_end;
     long h2d_time = 0, d2h_time = 0, kernel_time = 0;
-
+    size_t in_pitch, out_pitch;
     cublasHandle_t handle;
     cublasCreate(&handle);
     cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
 
     // for copying data and running kernel asynchronously: https://devblogs.nvidia.com/how-overlap-data-transfers-cuda-cc/
-    cudaStream_t stream[sub_m];
-    for (i = 0; i < sub_m; i++) {
-        cudaStreamCreate(stream + i);
-    }
+    // cudaStream_t stream[sub_m];
+    // for (i = 0; i < sub_m; i++) {
+    //     cudaStreamCreate(stream + i);
+    // }
 
-    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
-    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
-    cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
+    cudaMallocPitch((void **) &a_sub_d, &in_pitch, sizeof(double) * sub_k, sub_m);
+    cudaMallocPitch((void **) &b_sub_d, &in_pitch, sizeof(double) * sub_n, sub_k);
+    cudaMallocPitch((void **) &c_sub_f, &out_pitch, sizeof(float) * sub_n, sub_m);
+    printf("in pitch size: %lu\n", in_pitch);    
+    printf("out pitch size: %lu\n", out_pitch);
+
 
     for (i = 0; i < x; i += sub_m) {
         for (j = 0; j < y; j += sub_n) {
             cudaMemset(c_sub_f, 0, sub_m * sub_n * sizeof(float));
             for (k = 0; k < z; k += sub_k) {
                 gettimeofday(&h_start, NULL);
-                for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
-                    cudaMemcpyAsync((a_sub_d + i_idx * sub_n), (a + ii*y + k), sub_k * sizeof(double), cudaMemcpyHostToDevice, stream[i_idx]);
-                }
+                cudaMemcpy2D(a_sub_d, in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
+                // for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
+                //     cudaMemcpyAsync((a_sub_d + i_idx * sub_n), (a + ii*y + k), sub_k * sizeof(double), cudaMemcpyHostToDevice, stream[i_idx]);
+                // }
+                cudaMemcpy2D(b_sub_d, in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);
 
-                for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
-                    cudaMemcpyAsync((b_sub_d + k_idx * sub_n), (b + kk * y + j), sub_n * sizeof(double), cudaMemcpyHostToDevice, stream[k_idx]);
-                }
+                // for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
+                //     cudaMemcpyAsync((b_sub_d + k_idx * sub_n), (b + kk * y + j), sub_n * sizeof(double), cudaMemcpyHostToDevice, stream[k_idx]);
+                // }
                 gettimeofday(&h_end, NULL);
                 h2d_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
                 // cublasDgemm EXPLANATION ------------------------------------------------
@@ -242,9 +247,11 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
                 kernel_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
             }
             gettimeofday(&h_start, NULL);
-            for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
-                cudaMemcpyAsync((c + ii * y + j), (c_sub_f + i_idx * sub_n), sub_n * sizeof(float), cudaMemcpyDeviceToHost, stream[i_idx]);
-            }   
+            cudaMemcpy2D((c + i * y + j), x * sizeof(float), c_sub_f, out_pitch, sizeof(float) * sub_n, sub_m, cudaMemcpyDeviceToHost);
+
+            // for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
+            //     cudaMemcpyAsync((c + ii * y + j), (c_sub_f + i_idx * sub_n), sub_n * sizeof(float), cudaMemcpyDeviceToHost, stream[i_idx]);
+            // }   
             gettimeofday(&h_end, NULL);
             d2h_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);              
         }
@@ -252,9 +259,9 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     
     cublasDestroy(handle);
     
-    for (i = 0; i < sub_m; i++) {
-        cudaStreamDestroy(stream[i]);
-    }
+    // for (i = 0; i < sub_m; i++) {
+    //     cudaStreamDestroy(stream[i]);
+    // }
 
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
