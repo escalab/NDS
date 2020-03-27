@@ -10,7 +10,6 @@
 // for timing
 #include <sys/time.h>
 
-
 // ALGO 0: wholeMatrix_Sgemm
 // ALGO 1: wholeMatrix_Sgemm_half
 // ALGO 2: sequential_blockSgemm
@@ -22,7 +21,6 @@
 #define ALGO 0
 #endif
 
-
 int main(int argc, char** argv) {
     double *a, *b;
     float *c;
@@ -33,22 +31,22 @@ int main(int argc, char** argv) {
     
 #ifdef IS_BLOCK_ALGO
     long long sub_n;
-    if (argc < 4) {
-        printf("usage: %s <matrix path> <matrix size> <submatrix size>\n", argv[0]);
+    if (argc < 5) {
+        printf("usage: %s <matrix A path> <matrix A path> <matrix size> <submatrix size>\n", argv[0]);
         exit(1);
     }
-    sub_n = atoi(argv[3]);
+    sub_n = atoi(argv[4]);
 #else
-    if (argc < 3) {
-        printf("usage: %s <matrix path> <matrix size>\n", argv[0]);
+    if (argc < 4) {
+        printf("usage: %s <matrix B path> <matrix B path> <matrix size>\n", argv[0]);
         exit(1);
     }
 #endif
 
     // GEMM configuration.
     a_fd = open(argv[1], O_RDONLY);
-    b_fd = open(argv[1], O_RDONLY);
-    n = atoi(argv[2]);
+    b_fd = open(argv[2], O_RDONLY);
+    n = atoi(argv[3]);
 
     a = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
     b = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
