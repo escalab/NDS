@@ -1,0 +1,144 @@
+./cublas_perftest_5 ../../data/output_double_16384_A.bin ../../data/output_double_16384_B.bin 16384 32
+calculating the answer...
+h2d time: 1162204.625000 ms
+kernel time: 1210507.125000 ms
+d2h time: 2814.782959 ms
+computation duration: 2383148.750000 ms
+calculating the answer...
+h2d time: 1183091.875000 ms
+kernel time: 1236424.375000 ms
+d2h time: 2847.617920 ms
+computation duration: 2431404.250000 ms
+calculating the answer...
+h2d time: 1164666.500000 ms
+kernel time: 1226658.250000 ms
+d2h time: 2821.239014 ms
+computation duration: 2402213.000000 ms
+./cublas_perftest_5 ../../data/output_double_16384_A.bin ../../data/output_double_16384_B.bin 16384 64
+calculating the answer...
+h2d time: 242453.968750 ms
+kernel time: 151434.875000 ms
+d2h time: 1295.745972 ms
+computation duration: 396652.406250 ms
+calculating the answer...
+h2d time: 242499.015625 ms
+kernel time: 151336.500000 ms
+d2h time: 1279.333984 ms
+computation duration: 396600.968750 ms
+calculating the answer...
+h2d time: 243269.812500 ms
+kernel time: 148222.828125 ms
+d2h time: 1270.228027 ms
+computation duration: 394226.531250 ms
+./cublas_perftest_5 ../../data/output_double_16384_A.bin ../../data/output_double_16384_B.bin 16384 128
+calculating the answer...
+h2d time: 84357.015625 ms
+kernel time: 44123.238281 ms
+d2h time: 688.090027 ms
+computation duration: 129639.843750 ms
+calculating the answer...
+h2d time: 83449.015625 ms
+kernel time: 44360.429688 ms
+d2h time: 688.440979 ms
+computation duration: 128975.531250 ms
+calculating the answer...
+h2d time: 84314.062500 ms
+kernel time: 44041.238281 ms
+d2h time: 691.633972 ms
+computation duration: 129518.398438 ms
+./cublas_perftest_5 ../../data/output_double_16384_A.bin ../../data/output_double_16384_B.bin 16384 256
+calculating the answer...
+h2d time: 34289.121094 ms
+kernel time: 14848.000977 ms
+d2h time: 471.390015 ms
+computation duration: 49898.351562 ms
+calculating the answer...
+h2d time: 34097.128906 ms
+kernel time: 14833.948242 ms
+d2h time: 468.320007 ms
+computation duration: 49693.351562 ms
+calculating the answer...
+h2d time: 34245.906250 ms
+kernel time: 14836.876953 ms
+d2h time: 471.398010 ms
+computation duration: 49846.355469 ms
+./cublas_perftest_5 ../../data/output_double_16384_A.bin ../../data/output_double_16384_B.bin 16384 512
+calculating the answer...
+h2d time: 15238.469727 ms
+kernel time: 3471.831055 ms
+d2h time: 404.299988 ms
+computation duration: 19366.683594 ms
+calculating the answer...
+h2d time: 15278.218750 ms
+kernel time: 3481.335938 ms
+d2h time: 408.665985 ms
+computation duration: 19422.468750 ms
+calculating the answer...
+h2d time: 15298.617188 ms
+kernel time: 3473.444092 ms
+d2h time: 407.412994 ms
+computation duration: 19435.968750 ms
+./cublas_perftest_5 ../../data/output_double_16384_A.bin ../../data/output_double_16384_B.bin 16384 1024
+calculating the answer...
+h2d time: 7487.691895 ms
+kernel time: 672.210022 ms
+d2h time: 353.950012 ms
+computation duration: 8756.853516 ms
+calculating the answer...
+h2d time: 7246.068848 ms
+kernel time: 681.543030 ms
+d2h time: 336.298004 ms
+computation duration: 8512.182617 ms
+calculating the answer...
+h2d time: 7237.558105 ms
+kernel time: 680.666992 ms
+d2h time: 335.953003 ms
+computation duration: 8502.585938 ms
+./cublas_perftest_5 ../../data/output_double_16384_A.bin ../../data/output_double_16384_B.bin 16384 2048
+calculating the answer...
+h2d time: 3602.962891 ms
+kernel time: 293.341003 ms
+d2h time: 318.040985 ms
+computation duration: 4463.491211 ms
+calculating the answer...
+h2d time: 3581.696045 ms
+kernel time: 292.773010 ms
+d2h time: 319.194000 ms
+computation duration: 4444.129883 ms
+calculating the answer...
+h2d time: 3594.673096 ms
+kernel time: 293.217987 ms
+d2h time: 320.941010 ms
+computation duration: 4462.831055 ms
+./cublas_perftest_5 ../../data/output_double_16384_A.bin ../../data/output_double_16384_B.bin 16384 4096
+calculating the answer...
+h2d time: 1829.946045 ms
+kernel time: 225.514999 ms
+d2h time: 317.505005 ms
+computation duration: 2623.900879 ms
+calculating the answer...
+h2d time: 1819.099976 ms
+kernel time: 225.477997 ms
+d2h time: 313.614990 ms
+computation duration: 2608.001953 ms
+calculating the answer...
+h2d time: 1816.677002 ms
+kernel time: 225.520004 ms
+d2h time: 313.312988 ms
+computation duration: 2598.762939 ms
+./cublas_perftest_5 ../../data/output_double_16384_A.bin ../../data/output_double_16384_B.bin 16384 8192
+calculating the answer...
+h2d time: 939.231018 ms
+kernel time: 202.207001 ms
+d2h time: 312.415009 ms
+computation duration: 1701.816040 ms
+calculating the answer...
+h2d time: 936.835022 ms
+kernel time: 201.556000 ms
+d2h time: 313.696014 ms
+computation duration: 1703.869995 ms
+calculating the answer...
+h2d time: 944.562988 ms
+kernel time: 202.582001 ms
+d2h time: 315.320007 ms
+computation duration: 1711.933960 ms

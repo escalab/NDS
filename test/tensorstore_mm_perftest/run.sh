@@ -21,9 +21,9 @@ if [ ${algo} -ge 4 ]; then
 fi
 
 echo "running program..."
-if [[ $EUID -ne 0 ]]; then
+if [[ $EUID -eq 0 ]]; then
     echo $clean_cache
-    clean_cache
+    ${clean_cache}
 fi
 if [ ${algo} -ge 2 ]; then
     echo ./cublas_perftest_${algo} ${data}_A.bin ${data}_B.bin ${matrix_size} ${submatrix_size} 

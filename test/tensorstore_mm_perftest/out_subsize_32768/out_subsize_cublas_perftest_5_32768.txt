@@ -1,0 +1,60 @@
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 32
+calculating the answer...
+h2d time: 9752165.000000 ms
+kernel time: 9777136.000000 ms
+d2h time: 19789.306641 ms
+computation duration: 19607944.000000 ms
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 64
+calculating the answer...
+h2d time: 1970368.000000 ms
+kernel time: 1198898.750000 ms
+d2h time: 6262.175781 ms
+computation duration: 3185182.250000 ms
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 128
+calculating the answer...
+h2d time: 670664.812500 ms
+kernel time: 356157.281250 ms
+d2h time: 2699.782959 ms
+computation duration: 1031134.062500 ms
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 256
+calculating the answer...
+h2d time: 276148.031250 ms
+kernel time: 118362.414062 ms
+d2h time: 1826.354980 ms
+computation duration: 396816.156250 ms
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 512
+calculating the answer...
+h2d time: 122035.421875 ms
+kernel time: 27883.599609 ms
+d2h time: 1593.014038 ms
+computation duration: 151790.968750 ms
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 1024
+calculating the answer...
+h2d time: 57408.386719 ms
+kernel time: 5419.780762 ms
+d2h time: 1300.802002 ms
+computation duration: 64384.800781 ms
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 2048
+calculating the answer...
+h2d time: 28397.132812 ms
+kernel time: 2348.131104 ms
+d2h time: 1227.551025 ms
+computation duration: 32216.935547 ms
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 4096
+calculating the answer...
+h2d time: 14235.875000 ms
+kernel time: 1804.420044 ms
+d2h time: 1208.139038 ms
+computation duration: 17497.527344 ms
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 8192
+calculating the answer...
+h2d time: 7264.987793 ms
+kernel time: 1617.133057 ms
+d2h time: 1199.547974 ms
+computation duration: 10336.515625 ms
+./cublas_perftest_5 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 16384
+calculating the answer...
+h2d time: 3735.287109 ms
+kernel time: 1897.046997 ms
+d2h time: 1193.512939 ms
+computation duration: 7191.875977 ms
