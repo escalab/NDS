@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
     printf("calculating the answer...\n");
     memset(answer_c, 0, n * n * sizeof(float));
     gettimeofday(&h_start, NULL);
-    wholeMatrix_Dgemm(n, n, n, a, b, answer_c);
+    wholeMatrix_Sgemm_half(n, n, n, a, b, answer_c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("sequential format GEMM duration: %f ms\n", (float) duration / 1000);    
@@ -121,6 +121,9 @@ int main(int argc, char** argv) {
     tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #elif ALGO == 5
     tensor_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+#elif ALGO == 6
+    tensor_blockSgemm_half_async(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+
 #endif
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);

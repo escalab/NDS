@@ -22,7 +22,7 @@
 #endif
 
 int main(int argc, char** argv) {
-    double *a, *b;
+    double *a_f, *b_f, *a, *b;
     float *c;
     long long n;
     int a_fd, b_fd;
@@ -48,10 +48,18 @@ int main(int argc, char** argv) {
     b_fd = open(argv[2], O_RDONLY);
     n = atoi(argv[3]);
 
-    a = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
-    b = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
-    c = (float *) calloc(n * n, sizeof(float));
+    a_f = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
+    b_f = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
     
+    a = a_f;
+    b = b_f;
+    // cudaMallocHost((void**)&a, sizeof(double) * n * n);
+    // cudaMallocHost((void**)&b, sizeof(double) * n * n);
+    // memcpy(a, a_f, sizeof(double) * n * n);
+    // memcpy(b, b_f, sizeof(double) * n * n);
+
+    c = (float *) calloc(n * n, sizeof(float));
+    printf("memory usage: input: %llu bytes, output: %llu bytes\n", sizeof(double) * n * n * 2, sizeof(float) * n * n);
     printf("calculating the answer...\n");
     gettimeofday(&h_start, NULL);
 #ifdef IS_BLOCK_ALGO
@@ -63,6 +71,8 @@ int main(int argc, char** argv) {
     tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 5
     tensor_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+#elif ALGO == 6
+    tensor_blockSgemm_half_async(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #endif
 #else
 #if ALGO == 0
@@ -74,9 +84,10 @@ int main(int argc, char** argv) {
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("computation duration: %f ms\n", (float) duration / 1000);    
-
-    munmap(a, sizeof(double) * n * n);
-    munmap(b, sizeof(double) * n * n);
+    // cudaFreeHost(a);
+    // cudaFreeHost(b);
+    munmap(a_f, sizeof(double) * n * n);
+    munmap(b_f, sizeof(double) * n * n);
     close(a_fd);
     close(b_fd);
     free(c);
