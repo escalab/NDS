@@ -659,19 +659,45 @@ float* wholeMatrixHgemm(size_t m, size_t n, size_t k, const double *a, const dou
 void wholeMatrix_GemmEx(size_t m, size_t n, size_t k, const double *a, const double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
     float alpha = 1.0;
     float beta = 0.0;
-    double *a_d, *b_d;
+    void *a_d, *b_d;
     float *c_f;
+    const size_t dsize = m * n;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
     cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
 
-    cudaMalloc((void **) &a_d, sizeof(double) * m * k);
-    cudaMalloc((void **) &b_d, sizeof(double) * k * n);
+    // Find out we have to make type conversion first.
+    // Assume Atype == Btype
+    // arrays need to be converted only when input type is half or float 
+    if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
+        double *temp_a, *temp_b;
+        cudaMalloc((void **) &temp_a, sizeof(double) * m * k);
+        cudaMalloc((void **) &temp_b, sizeof(double) * k * n);
+        cudaMemcpy(temp_a, a, sizeof(double) * m * k, cudaMemcpyHostToDevice);
+        cudaMemcpy(temp_b, b, sizeof(double) * k * n, cudaMemcpyHostToDevice);  
+        if (Atype == CUDA_R_16F) {
+            cudaMalloc((void **) &a_d, sizeof(half) * m * k);
+            cudaMalloc((void **) &b_d, sizeof(half) * k * n);
+            d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_a, (half *) a_d, dsize);
+            d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_b, (half *) b_d, dsize);
+        } else {
+            cudaMalloc((void **) &a_d, sizeof(float) * m * k);
+            cudaMalloc((void **) &b_d, sizeof(float) * k * n);    
+            d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_a, (float *) a_d, dsize);
+            d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_b, (float *) b_d, dsize);
+        }
+        cudaFree(temp_a);
+        cudaFree(temp_b);
+    } else if (Atype == CUDA_R_64F) {
+        cudaMemcpy(a_d, a, sizeof(double) * m * k, cudaMemcpyHostToDevice);
+        cudaMemcpy(b_d, b, sizeof(double) * k * n, cudaMemcpyHostToDevice);    
+    } else {
+        printf("input type: %d is not supported\n", Atype);
+        return;
+    }
+    
     cudaMalloc((void **) &c_f, sizeof(float) * m * n);
-
-    cudaMemcpy(a_d, a, sizeof(double) * m * k, cudaMemcpyHostToDevice);
-    cudaMemcpy(b_d, b, sizeof(double) * k * n, cudaMemcpyHostToDevice);
 
     // cublasDgemm EXPLANATION ------------------------------------------------
     // the memory layout is different from we know
@@ -682,6 +708,7 @@ void wholeMatrix_GemmEx(size_t m, size_t n, size_t k, const double *a, const dou
     // maybe that's because inside GPU it uses column major storage.
     // cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, b_f, CUDA_R_16F, k, a_f, CUDA_R_16F, m, &beta, c_f, CUDA_R_32F, m);
     cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, b_d, Btype, k, a_d, Atype, m, &beta, c_f, Ctype, m, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+    
     cudaFree(a_d);
     cudaFree(b_d);
 

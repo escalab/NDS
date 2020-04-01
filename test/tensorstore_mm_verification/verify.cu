@@ -10,6 +10,10 @@
 // for timing
 #include <sys/time.h>
 
+// for checking nan
+#include <math.h>
+
+
 // ALGO 0: wholeMatrix_Sgemm
 // ALGO 1: wholeMatrix_Sgemm_half
 // ALGO 2: sequential_blockSgemm
@@ -27,12 +31,21 @@ int verify(const float *C, const float *answer, int m, int n) {
     float relativeError;
     for(row = 0; row < m; ++row) {
         for(col = 0; col < n; ++col) {
+            if (isnan(C[row*n + col])) {
+                printf("(%d, %d) is NaN\n", row, col);
+                return 0; 
+            }
+
+            if (isinf(C[row*n + col])) {
+                printf("(%d, %d) is inf\n", row, col);
+                return 0; 
+            }
             relativeError = (answer[row*n + col] - C[row*n + col]) / answer[row*n + col];
             if (fabs(relativeError) > relativeTolerance) {
                 printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], answer[row*n + col]); 
                 printf("TEST FAILED\n\n");
                 return 0;
-            }
+            }    
         }
     }
     printf("TEST PASSED\n\n");
@@ -101,7 +114,7 @@ int main(int argc, char** argv) {
     printf("calculating the answer...\n");
     memset(answer_c, 0, n * n * sizeof(float));
     gettimeofday(&h_start, NULL);
-    wholeMatrix_Sgemm_half(n, n, n, a, b, answer_c);
+    wholeMatrix_Dgemm(n, n, n, a, b, answer_c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("sequential format GEMM duration: %f ms\n", (float) duration / 1000);    
@@ -127,7 +140,7 @@ int main(int argc, char** argv) {
 #elif ALGO == 7
     tensor_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #elif ALGO == 8
-    tensor_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+    tensor_blockSgemm_half_async_v3(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 
 #endif
     gettimeofday(&h_end, NULL);
@@ -162,11 +175,11 @@ int main(int argc, char** argv) {
         char filename[64];
         FILE *fptr;
 #if ALGO >= 4
-        printf("writing tensor format answer to %s\n", filename);
         sprintf(filename, "ans_block_%d_%d.bin", n, sub_n);
+        printf("writing tensor format answer to %s\n", &filename[0]);
 #else
-        printf("writing sequential answer to %s\n", filename);
         sprintf(filename, "ans_%d.bin", n);
+        printf("writing sequential answer to %s\n", &filename[0]);
 #endif
         fptr = fopen(filename, "wb");
         fwrite(c, sizeof(float), n * n, fptr);
