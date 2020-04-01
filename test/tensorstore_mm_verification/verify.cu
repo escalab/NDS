@@ -126,6 +126,8 @@ int main(int argc, char** argv) {
     tensor_blockSgemm_half_async(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #elif ALGO == 7
     tensor_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+#elif ALGO == 8
+    tensor_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 
 #endif
     gettimeofday(&h_end, NULL);
