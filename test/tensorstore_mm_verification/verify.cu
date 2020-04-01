@@ -108,6 +108,7 @@ int main(int argc, char** argv) {
 
     printf("calculating the result of the sequential format\n");
     memset(c, 0, n * n * sizeof(float));
+    printf("running algorithm %d\n", ALGO);
     gettimeofday(&h_start, NULL);
 #if ALGO == 0
     wholeMatrix_Sgemm(n, n, n, a, b, c);
@@ -123,6 +124,8 @@ int main(int argc, char** argv) {
     tensor_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #elif ALGO == 6
     tensor_blockSgemm_half_async(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+#elif ALGO == 7
+    tensor_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 
 #endif
     gettimeofday(&h_end, NULL);

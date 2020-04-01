@@ -2,7 +2,7 @@ NVCC = nvcc
 LD_FLAGS = -O3 -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
 LD_FLAGS += -I../../lib/gemm -L../../lib/gemm -lcublasGEMM
 
-TARGET=cublas_gemm_verification_0 cublas_gemm_verification_1 cublas_gemm_verification_2 cublas_gemm_verification_3 cublas_gemm_verification_4 cublas_gemm_verification_5 cublas_gemm_verification_6
+TARGET=cublas_gemm_verification_0 cublas_gemm_verification_1 cublas_gemm_verification_2 cublas_gemm_verification_3 cublas_gemm_verification_4 cublas_gemm_verification_5 cublas_gemm_verification_6 cublas_gemm_verification_7
 SRC=verify.cu
 
 
@@ -34,6 +34,9 @@ cublas_gemm_verification_5: $(SRC)
 
 cublas_gemm_verification_6: $(SRC) 
 	$(NVCC) -o $@ $^ $(LD_FLAGS) -DALGO=6
+
+cublas_gemm_verification_7: $(SRC) 
+	$(NVCC) -o $@ $^ $(LD_FLAGS) -DALGO=7
 
 clean:
 	rm -rf $(TARGET)
