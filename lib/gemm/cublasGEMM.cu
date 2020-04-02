@@ -692,6 +692,10 @@ void sequential_blockDgemm_2D(size_t x, size_t y, size_t z, size_t sub_m, size_t
     cublasHandle_t handle;
     cublasCreate(&handle);
 
+    // cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_k * sub_m);
+    // cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_n * sub_k);
+    // cudaMalloc((void **) &c_sub_d, sizeof(double) * sub_n * sub_m);
+
     cudaMallocPitch((void **) &a_sub_d, &a_in_pitch, sizeof(double) * sub_k, sub_m);
     cudaMallocPitch((void **) &b_sub_d, &b_in_pitch, sizeof(double) * sub_n, sub_k);
     cudaMallocPitch((void **) &c_sub_d, &out_d_pitch, sizeof(double) * sub_n, sub_m);
@@ -712,9 +716,13 @@ void sequential_blockDgemm_2D(size_t x, size_t y, size_t z, size_t sub_m, size_t
         for (j = 0; j < y; j += sub_n) {
             // printf("memset\n");
             cudaMemset2D(c_sub_d, out_d_pitch, 0, sub_n * sizeof(double), sub_m);
+
             for (k = 0; k < z; k += sub_k) {
-                cudaMemcpy2D(a_sub_d, a_in_pitch, (a + i*y + k), sub_k * sizeof(double), sub_k * sizeof(double), sub_m, cudaMemcpyHostToDevice);
-                cudaMemcpy2D(b_sub_d, b_in_pitch, (b + k*y + j), sub_n * sizeof(double), sub_n * sizeof(double), sub_k, cudaMemcpyHostToDevice);
+                // cudaMemcpy2D(c_sub_d, out_d_pitch, (a + i*y + k), z * sizeof(double), sub_k * sizeof(double), sub_m, cudaMemcpyHostToDevice);
+                // cudaMemcpy2D(a_sub_d, a_in_pitch, (a + i*y + k), sub_k * sizeof(double), sub_k * sizeof(double), sub_m, cudaMemcpyHostToDevice);
+                
+                cudaMemcpy2D(c_sub_d, out_d_pitch, (b + k*y + j), y * sizeof(double), sub_n * sizeof(double), sub_k, cudaMemcpyHostToDevice);
+                // cudaMemcpy2D(b_sub_d, b_in_pitch, (b + k*y + j), sub_n * sizeof(double), sub_n * sizeof(double), sub_k, cudaMemcpyHostToDevice);
 
                 // cublasDgemm EXPLANATION ------------------------------------------------
                 // the memory layout is different from we know
@@ -723,14 +731,49 @@ void sequential_blockDgemm_2D(size_t x, size_t y, size_t z, size_t sub_m, size_t
                 // if use a_d then b_d, c[0][0] will be a[0, 0] * b[0, 0] + a[1, 0] * b[0, 1] = 4
                 // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
                 // maybe that's because inside GPU it uses column major storage.
-                cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, sub_k, a_sub_d, sub_m, &beta, c_sub_d, sub_m);
+                // cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, sub_k, a_sub_d, sub_m, &beta, c_sub_d, sub_m);
+                // cudaMemcpy2D((c_d + i*y + k), y * sizeof(double), c_sub_d, out_d_pitch, sub_n * sizeof(double), sub_m, cudaMemcpyDeviceToHost);
+                cudaMemcpy2D((c_d + k*y + j), y * sizeof(double), c_sub_d, out_d_pitch, sub_n * sizeof(double), sub_m, cudaMemcpyDeviceToHost);
             }
             // printf("memcpy\n");
-            cudaMemcpy2D((c_d + i*y + j), sub_n * sizeof(double), c_sub_d, out_d_pitch, sub_n * sizeof(double), sub_m, cudaMemcpyDeviceToHost);
         }
     }  
     cudaMemcpy(c_h, c_d, dsize * sizeof(double), cudaMemcpyDeviceToHost);
-    printf("%f\n", c_h[0]);
+    for (i = 0; i < x; i++) {
+        for (j = 0; j < y; j++) {
+            printf("%f ", b[i*y+j]);          
+        }
+        printf("\n");
+    }  
+    printf("\n");
+ 
+    for (i = 0; i < x; i++) {
+        for (j = 0; j < y; j++) {
+            printf("%f ", c_h[i*y+j]);          
+        }
+        printf("\n");
+    }     
+       
+    const float relativeTolerance = 1e-3;
+    float relativeError;
+    for (i = 0; i < x; i++) {
+        for (j = 0; j < y; j++) {
+            if (isnan(c_h[i*y + j])) {
+                printf("(%lu, %lu) is NaN\n", i, j);
+            }
+
+            if (isinf(c_h[i*y + j])) {
+                printf("(%lu, %lu) is inf\n", i, j);
+            }
+            relativeError = (a[i*y + j] - c_h[i*y + j]) / a[i*y + j];
+            if (fabs(relativeError) > relativeTolerance) {
+                printf("(%lu, %lu) = %f, supposed to be %f\n", i, j, c_h[i*y + j], a[i*y + j]); 
+                printf("TEST FAILED\n\n");
+            }            
+        }
+    }   
+    printf("TEST PASSED\n\n");
+
     printf("conversion\n");
     d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_d, c_f, dsize);
     cudaMemcpy(c, c_f, dsize * sizeof(float), cudaMemcpyDeviceToHost);
