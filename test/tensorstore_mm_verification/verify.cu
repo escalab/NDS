@@ -129,9 +129,9 @@ int main(int argc, char** argv) {
 #elif ALGO == 1
     wholeMatrix_Sgemm_half(n, n, n, a, b, c);
 #elif ALGO == 2
-    sequential_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    sequential_blockDgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 3
-    sequential_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    sequential_blockDgemm_2D(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 4
     tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #elif ALGO == 5

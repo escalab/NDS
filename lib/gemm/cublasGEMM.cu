@@ -16,25 +16,46 @@ __global__ void d2h_kernel(const double *din, half *dout, size_t dsize) {
 	}
 }
 
+
+/**************************/
+/* TEST KERNEL PITCHED 2D */
+/**************************/
+// __global__ void test_kernel_Pitched_2D(float * __restrict__ devPtrA, float * __restrict__ devPtrB, float * __restrict__ devPtrC, const size_t pitchA, const size_t pitchB, const size_t pitchC, const int Nrows, const int Ncols)
+// {
+//     int    tidx = blockIdx.x * blockDim.x + threadIdx.x;
+//     int    tidy = blockIdx.y * blockDim.y + threadIdx.y;
+
+//     if ((tidx < Ncols) && (tidy < Nrows))
+//     {
+//         float *row_a = (float *)((char*)devPtrA + tidy * pitchA);
+//         float *row_b = (float *)((char*)devPtrB + tidy * pitchB);
+//         float *row_c = (float *)((char*)devPtrC + tidy * pitchC);
+//         row_a[tidx] = row_a[tidx] + row_b[tidx] + row_c[tidx];
+//     }
+// }
+
 // pitched memory address calculation.
 // T* pElement = (T*)((char*)BaseAddress + Row * pitch) + Column;
-__global__ void d2f_kernel_pitch(const double *din, const size_t in_pitch, const size_t col, float *dout, const size_t dsize) {
-    size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
-	if (idx < dsize)
+// float* element = (float*)((char*)devPtr + r * pitch + c * sizeof(float));
+__global__ void d2f_kernel_pitch_2D(const double *din, const size_t in_pitch, float *dout, const size_t out_pitch, const size_t nrows, const size_t ncols) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idy = blockIdx.y * blockDim.y + threadIdx.y;
+	if ((idx < ncols) && (idy < nrows))
 	{
-        size_t i = idx / col;
-        size_t j = idx % col;
-	    dout[idx] = ((double *) ((char*) din + i * in_pitch))[j];
+        double *in = (double *)((char*) din + idy * in_pitch); // in_pitch = 512
+        float *out = (float *)((char*) dout + idy * (out_pitch / sizeof(float)));
+	    out[idx] = (float) in[idx];
 	}
 }
 
-__global__ void d2h_kernel_pitch(const double *din, const size_t in_pitch, const size_t col, half *dout, const size_t dsize) {
-    size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
-	if (idx < dsize)
+__global__ void d2h_kernel_pitch_2D(const double *din, const size_t in_pitch, half *dout, const size_t out_pitch, const size_t nrows, const size_t ncols) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idy = blockIdx.y * blockDim.y + threadIdx.y;
+	if ((idx < ncols) && (idy < nrows))
 	{
-        size_t i = idx / col;
-        size_t j = idx % col;
-        dout[idx] = ((double *) ((char*) din + i * in_pitch))[j];
+        double *in = (double *)((char*) din + idy * in_pitch);
+        half *out = (half *)((char*) dout + idy * (out_pitch / sizeof(half)));
+	    out[idx] = (half) in[idx];
 	}
 }
 
@@ -542,13 +563,13 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     float *c_sub_f;
     struct timeval h_start, h_end;
     unsigned long long h2d_time = 0, d2h_time = 0, kernel_time = 0;
-    size_t in_pitch, out_pitch;
+    size_t in_pitch, converted_in_pitch, out_pitch;
     cublasHandle_t handle;
-    // assume input/output arrays are the same size and square matrix now
-    const size_t dsize = sub_m * sub_n;
-
     cublasCreate(&handle);
     cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
+
+    dim3 gridSize((sub_m+32-1)/32, (sub_n+32-1)/32);
+    dim3 blockSize(32, 32);
 
     // for copying data and running kernel asynchronously: https://devblogs.nvidia.com/how-overlap-data-transfers-cuda-cc/
     // cudaStream_t stream[sub_m];
@@ -560,15 +581,15 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
         cudaMallocPitch((void **) &temp_a, &in_pitch, sizeof(double) * sub_k, sub_m);
         cudaMallocPitch((void **) &temp_b, &in_pitch, sizeof(double) * sub_k, sub_m);    
         if (Atype == CUDA_R_16F) {
-            cudaMalloc((void **) &a_sub_d, sizeof(half) * sub_m * sub_k);
-            cudaMalloc((void **) &b_sub_d, sizeof(half) * sub_k * sub_n);
-            // cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
-            // cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
+            // cudaMalloc((void **) &a_sub_d, sizeof(half) * sub_m * sub_k);
+            // cudaMalloc((void **) &b_sub_d, sizeof(half) * sub_k * sub_n);
+            cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
+            cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
         } else {
-            cudaMalloc((void **) &a_sub_d, sizeof(float) * sub_m * sub_k);
-            cudaMalloc((void **) &b_sub_d, sizeof(float) * sub_k * sub_n);
-            // cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(float) * sub_k, sub_m);
-            // cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(float) * sub_k, sub_m);    
+            // cudaMalloc((void **) &a_sub_d, sizeof(float) * sub_m * sub_k);
+            // cudaMalloc((void **) &b_sub_d, sizeof(float) * sub_k * sub_n);
+            cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(float) * sub_k, sub_m);
+            cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(float) * sub_k, sub_m);    
         }
     } else if (Atype == CUDA_R_64F) {
         cudaMallocPitch((void **) &a_sub_d, &in_pitch, sizeof(double) * sub_k, sub_m);
@@ -579,25 +600,28 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     }
 
     cudaMallocPitch((void **) &c_sub_f, &out_pitch, sizeof(float) * sub_n, sub_m);
-    // printf("in pitch size: %lu\n", in_pitch);    
-    // printf("out pitch size: %lu\n", out_pitch);
-
+    printf("in pitch size: %lu\n", in_pitch);   
+    printf("converted_in_pitch size: %lu\n", converted_in_pitch);
+    printf("out pitch size: %lu\n", out_pitch);
+    printf("temp_a address: %p\n", temp_a);
+    printf("temp_b address: %p\n", temp_b);
     for (i = 0; i < x; i += sub_m) {
         for (j = 0; j < y; j += sub_n) {
-            cudaMemset(c_sub_f, 0, sub_m * sub_n * sizeof(float));
+            cudaMemset2D(c_sub_f, out_pitch, 0, sub_n * sizeof(float), sub_m);
             for (k = 0; k < z; k += sub_k) {
                 gettimeofday(&h_start, NULL);
                 if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
                     cudaMemcpy2D(temp_a, in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
                     cudaMemcpy2D(temp_b, in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);
                     if (Atype == CUDA_R_16F) {
-                        d2h_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_a, in_pitch, sub_k, (half *) a_sub_d, dsize);
-                        d2h_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_b, in_pitch, sub_n, (half *) b_sub_d, dsize);
+                        d2h_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_a, in_pitch, (half *) a_sub_d, converted_in_pitch, sub_m, sub_k);
+                        d2h_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_b, in_pitch, (half *) b_sub_d, converted_in_pitch, sub_k, sub_n);
                     } else { 
-                        d2f_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_a, in_pitch, sub_k, (float *) a_sub_d, dsize);
-                        d2f_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_b, in_pitch, sub_n, (float *) b_sub_d, dsize);
+                        d2f_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_a, in_pitch, (float *) a_sub_d, converted_in_pitch, sub_m, sub_k);
+                        d2f_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_b, in_pitch, (float *) b_sub_d, converted_in_pitch, sub_k, sub_n);
                     }
-                } else { // CUDA_R_64F
+                } 
+                else { // CUDA_R_64F
                     cudaMemcpy2D(a_sub_d, in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
                     cudaMemcpy2D(b_sub_d, in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);    
                 } 
@@ -655,6 +679,72 @@ void sequential_blockSgemm_half(size_t x, size_t y, size_t z, size_t sub_m, size
 void sequential_blockSgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c) {
     sequential_blockGemmEx(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F);
+}
+
+void sequential_blockDgemm_2D(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
+    const double *a, const double *b, float *c) {
+    size_t i, j, k, ii, kk, i_idx, k_idx;
+    double alpha = 1.0;
+    double beta = 1.0;
+    double *a_sub_d, *b_sub_d, *c_sub_d, *c_d;
+    // float *c_sub_f;
+    float *c_f;
+    size_t a_in_pitch, b_in_pitch, out_f_pitch, out_d_pitch;
+    double *c_h = (double *) malloc(sizeof(double) * x * y);
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    cudaMallocPitch((void **) &a_sub_d, &a_in_pitch, sizeof(double) * sub_k, sub_m);
+    cudaMallocPitch((void **) &b_sub_d, &b_in_pitch, sizeof(double) * sub_n, sub_k);
+    cudaMallocPitch((void **) &c_sub_d, &out_d_pitch, sizeof(double) * sub_n, sub_m);
+    // cudaMallocPitch((void **) &c_sub_f, &out_f_pitch, sizeof(float) * sub_m * sub_n);
+
+    cudaMalloc((void **) &c_d, sizeof(double) * x * y);
+    cudaMalloc((void **) &c_f, sizeof(float) * x * y);
+
+    printf("a_in_pitch size: %lu\n", a_in_pitch); 
+    printf("b_in_pitch size: %lu\n", b_in_pitch);   
+  
+    printf("out_d_pitch size: %lu\n", out_d_pitch);
+    // printf("out_f_pitch size: %lu\n", out_f_pitch);
+
+    size_t dsize = x * y;
+
+    for (i = 0; i < x; i += sub_m) {
+        for (j = 0; j < y; j += sub_n) {
+            // printf("memset\n");
+            cudaMemset2D(c_sub_d, out_d_pitch, 0, sub_n * sizeof(double), sub_m);
+            for (k = 0; k < z; k += sub_k) {
+                cudaMemcpy2D(a_sub_d, a_in_pitch, (a + i*y + k), sub_k * sizeof(double), sub_k * sizeof(double), sub_m, cudaMemcpyHostToDevice);
+                cudaMemcpy2D(b_sub_d, b_in_pitch, (b + k*y + j), sub_n * sizeof(double), sub_n * sizeof(double), sub_k, cudaMemcpyHostToDevice);
+
+                // cublasDgemm EXPLANATION ------------------------------------------------
+                // the memory layout is different from we know
+                // a = [0 1; b = [3 2; 
+                //      2 3]      1 0]
+                // if use a_d then b_d, c[0][0] will be a[0, 0] * b[0, 0] + a[1, 0] * b[0, 1] = 4
+                // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
+                // maybe that's because inside GPU it uses column major storage.
+                cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, sub_k, a_sub_d, sub_m, &beta, c_sub_d, sub_m);
+            }
+            // printf("memcpy\n");
+            cudaMemcpy2D((c_d + i*y + j), sub_n * sizeof(double), c_sub_d, out_d_pitch, sub_n * sizeof(double), sub_m, cudaMemcpyDeviceToHost);
+        }
+    }  
+    cudaMemcpy(c_h, c_d, dsize * sizeof(double), cudaMemcpyDeviceToHost);
+    printf("%f\n", c_h[0]);
+    printf("conversion\n");
+    d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_d, c_f, dsize);
+    cudaMemcpy(c, c_f, dsize * sizeof(float), cudaMemcpyDeviceToHost);
+    cublasDestroy(handle);
+
+    cudaFree(a_sub_d);
+    cudaFree(b_sub_d);
+    cudaFree(c_sub_d);
+    cudaFree(c_d);
+    cudaFree(c_f);
+    free(c_h);
+    // cudaFree(c_sub_f);
 }
 
 void sequential_blockDgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
