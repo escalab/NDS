@@ -43,7 +43,7 @@ __global__ void d2f_kernel_pitch_2D(const double *din, const size_t in_pitch, fl
 	if ((idx < ncols) && (idy < nrows))
 	{
         double *in = (double *)((char*) din + idy * in_pitch); // in_pitch = 512
-        float *out = (float *)((char*) dout + idy * (out_pitch / sizeof(float)));
+        float *out = (float *)((char*) dout + idy * out_pitch);
 	    out[idx] = (float) in[idx];
 	}
 }
@@ -52,9 +52,6 @@ __global__ void d2f_kernel_pitch(const double *din, const size_t in_pitch, float
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if (idx < dsize)
 	{
-        // size_t in_rows = dsize / ld_in;
-        // size_t out_rows = dsize / ld_out;
-        
         size_t in_i = idx / ncols;
         size_t in_j = idx % ncols;
 
@@ -734,6 +731,9 @@ void sequential_blockDgemm_2D(size_t x, size_t y, size_t z, size_t sub_m, size_t
     size_t ldc_f = out_f_pitch / sizeof(float);
     printf("ldc_d: %lu, ldc_f: %lu\n", ldc_d, ldc_f);
 
+    dim3 gridSize((sub_m+32-1)/32, (sub_n+32-1)/32);
+    dim3 blockSize(32, 32);
+    
     for (i = 0; i < x; i += sub_m) {
         for (j = 0; j < y; j += sub_n) {
             // printf("memset\n");
@@ -757,7 +757,8 @@ void sequential_blockDgemm_2D(size_t x, size_t y, size_t z, size_t sub_m, size_t
                 // cudaMemcpy2D((c_d + i*y + k), y * sizeof(double), c_sub_d, out_d_pitch, sub_n * sizeof(double), sub_m, cudaMemcpyDeviceToHost);
                 // cudaMemcpy2D((c_d + k*y + j), y * sizeof(double), c_sub_d, out_d_pitch, sub_n * sizeof(double), sub_m, cudaMemcpyDeviceToHost);
             }
-            d2f_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_sub_d, out_d_pitch, c_sub_f, out_f_pitch, dsize, sub_n);
+            d2f_kernel_pitch_2D<<<gridSize, blockSize>>>(c_sub_d, out_d_pitch, c_sub_f, out_f_pitch, sub_m, sub_n);
+            // d2f_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_sub_d, out_d_pitch, c_sub_f, out_f_pitch, dsize, sub_n);
             cudaMemcpy2D((c + i*y + j), y * sizeof(float), c_sub_f, out_f_pitch, sub_n * sizeof(float), sub_m, cudaMemcpyDeviceToHost);
         }
     }  
