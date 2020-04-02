@@ -358,13 +358,11 @@ void tensor_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n
         cudaMalloc((void **) &temp_a, sizeof(double) * sub_m * sub_k);
         cudaMalloc((void **) &temp_b, sizeof(double) * sub_k * sub_n);    
         if (Atype == CUDA_R_16F) {
-            printf("half type\n");
+            // printf("half type\n");
             cudaMalloc((void **) &a_sub_d, sizeof(half) * sub_m * sub_k);
             cudaMalloc((void **) &b_sub_d, sizeof(half) * sub_k * sub_n);
-            // cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
-            // cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
         } else {
-            printf("float type\n");
+            // printf("float type\n");
             cudaMalloc((void **) &a_sub_d, sizeof(float) * sub_m * sub_k);
             cudaMalloc((void **) &b_sub_d, sizeof(float) * sub_k * sub_n);
         }

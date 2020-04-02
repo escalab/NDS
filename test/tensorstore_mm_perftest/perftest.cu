@@ -61,8 +61,15 @@ int main(int argc, char** argv) {
     c = (float *) calloc(n * n, sizeof(float));
     printf("memory usage: input: %llu bytes, output: %llu bytes\n", sizeof(double) * n * n * 2, sizeof(float) * n * n);
     printf("calculating the answer...\n");
+    printf("running algorithm %d\n", ALGO);
     gettimeofday(&h_start, NULL);
-#ifdef IS_BLOCK_ALGO
+#ifndef IS_BLOCK_ALGO
+#if ALGO == 0
+    wholeMatrix_Sgemm(n, n, n, a, b, c);
+#elif ALGO == 1
+    wholeMatrix_Sgemm_half(n, n, n, a, b, c);
+#endif
+#else
 #if ALGO == 2
     sequential_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 3
@@ -74,13 +81,8 @@ int main(int argc, char** argv) {
 #elif ALGO == 6
     tensor_blockSgemm_half_async(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #endif
-#else
-#if ALGO == 0
-    wholeMatrix_Sgemm(n, n, n, a, b, c);
-#elif ALGO == 1
-    wholeMatrix_Sgemm_half(n, n, n, a, b, c);
 #endif
-#endif
+
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("computation duration: %f ms\n", (float) duration / 1000);    

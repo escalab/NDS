@@ -142,7 +142,6 @@ int main(int argc, char** argv) {
     tensor_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #elif ALGO == 8
     tensor_blockSgemm_half_async_v3(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
-
 #endif
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);

@@ -3,7 +3,8 @@ LD_FLAGS = -O3 -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_stati
 LD_FLAGS += -I../../lib/gemm -L../../lib/gemm -lcublasGEMM
 
 SRC=perftest.cu
-TARGET=cublas_perftest_0 cublas_perftest_1 cublas_perftest_2 cublas_perftest_3 cublas_perftest_4 cublas_perftest_5 cublas_perftest_6
+TARGET=cublas_perftest_0 cublas_perftest_1 cublas_perftest_2 cublas_perftest_3 cublas_perftest_4 
+TARGET+=cublas_perftest_5 cublas_perftest_6
 
 ifeq ($(debug),1)
 	LD_FLAGS += -g -DDEBUG
