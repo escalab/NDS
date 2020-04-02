@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     struct timeval h_start, h_end;
     long duration;
 
-#if ALGO >= 4
+#if ALGO >= 6
     int sub_n;
     int a_tensor_fd, b_tensor_fd;
     double *a_tensor, *b_tensor;
@@ -133,21 +133,26 @@ int main(int argc, char** argv) {
 #elif ALGO == 3
     sequential_blockDgemm_2D(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 4
-    tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+    sequential_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 5
-    tensor_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+    sequential_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+
 #elif ALGO == 6
-    tensor_blockSgemm_half_async(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+    tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #elif ALGO == 7
-    tensor_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+    tensor_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #elif ALGO == 8
+    tensor_blockSgemm_half_async(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+#elif ALGO == 9
+    tensor_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+#elif ALGO == 10
     tensor_blockSgemm_half_async_v3(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #endif
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
 
-#if ALGO >= 4
+#if ALGO >= 6
     printf("Reformat from tensor to sequential...\n");
     int count = 0;
     gettimeofday(&h_start, NULL);
@@ -174,7 +179,7 @@ int main(int argc, char** argv) {
     if (is_passed && need_output) {
         char filename[64];
         FILE *fptr;
-#if ALGO >= 4
+#if ALGO >= 6
         sprintf(filename, "ans_block_%d_%d.bin", n, sub_n);
         printf("writing tensor format answer to %s\n", &filename[0]);
 #else
@@ -220,7 +225,7 @@ int main(int argc, char** argv) {
     free(answer_c);
     free(c);
 
-#if ALGO >= 4
+#if ALGO >= 6
     munmap(a_tensor, sizeof(double) * n * n);
     munmap(b_tensor, sizeof(double) * n * n);
     close(a_tensor_fd);

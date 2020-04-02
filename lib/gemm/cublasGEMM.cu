@@ -48,6 +48,17 @@ __global__ void d2f_kernel_pitch_2D(const double *din, const size_t in_pitch, fl
 	}
 }
 
+__global__ void d2h_kernel_pitch_2D(const double *din, const size_t in_pitch, half *dout, const size_t out_pitch, const size_t nrows, const size_t ncols) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idy = blockIdx.y * blockDim.y + threadIdx.y;
+	if ((idx < ncols) && (idy < nrows))
+	{
+        double *in = (double *)((char*) din + idy * in_pitch);
+        half *out = (half *)((char*) dout + idy * out_pitch);
+	    out[idx] = (half) in[idx];
+    }
+}
+
 __global__ void d2f_kernel_pitch(const double *din, const size_t in_pitch, float *dout, const size_t out_pitch, const size_t dsize, const size_t ncols) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if (idx < dsize)
@@ -65,16 +76,7 @@ __global__ void d2f_kernel_pitch(const double *din, const size_t in_pitch, float
 	}
 }
 
-__global__ void d2h_kernel_pitch_2D(const double *din, const size_t in_pitch, half *dout, const size_t out_pitch, const size_t nrows, const size_t ncols) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int idy = blockIdx.y * blockDim.y + threadIdx.y;
-	if ((idx < ncols) && (idy < nrows))
-	{
-        double *in = (double *)((char*) din + idy * in_pitch);
-        half *out = (half *)((char*) dout + idy * (out_pitch / sizeof(half)));
-	    out[idx] = (half) in[idx];
-	}
-}
+
 
 __global__ void h2f_kernel(half *din, float *dout, size_t dsize) {
 	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
@@ -578,7 +580,9 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     float *c_sub_f;
     struct timeval h_start, h_end;
     unsigned long long h2d_time = 0, d2h_time = 0, kernel_time = 0;
-    size_t in_pitch, converted_in_pitch, out_pitch;
+    size_t a_in_pitch, converted_a_in_pitch;
+    size_t b_in_pitch, converted_b_in_pitch;
+    size_t out_pitch;
     cublasHandle_t handle;
     cublasCreate(&handle);
     cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
@@ -592,53 +596,66 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     //     cudaStreamCreate(stream + i);
     // }
 
+    size_t lda;
+    size_t ldb;
+    size_t ldc;
     if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
-        cudaMallocPitch((void **) &temp_a, &in_pitch, sizeof(double) * sub_k, sub_m);
-        cudaMallocPitch((void **) &temp_b, &in_pitch, sizeof(double) * sub_k, sub_m);    
+        cudaMallocPitch((void **) &temp_a, &a_in_pitch, sizeof(double) * sub_k, sub_m);
+        cudaMallocPitch((void **) &temp_b, &b_in_pitch, sizeof(double) * sub_n, sub_k);    
         if (Atype == CUDA_R_16F) {
             // cudaMalloc((void **) &a_sub_d, sizeof(half) * sub_m * sub_k);
             // cudaMalloc((void **) &b_sub_d, sizeof(half) * sub_k * sub_n);
-            cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
-            cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
+            cudaMallocPitch((void **) &a_sub_d, &converted_a_in_pitch, sizeof(half) * sub_k, sub_m);
+            cudaMallocPitch((void **) &b_sub_d, &converted_b_in_pitch, sizeof(half) * sub_n, sub_k);
+            lda = converted_a_in_pitch / sizeof(half);
+            ldb = converted_b_in_pitch / sizeof(half);
         } else {
             // cudaMalloc((void **) &a_sub_d, sizeof(float) * sub_m * sub_k);
             // cudaMalloc((void **) &b_sub_d, sizeof(float) * sub_k * sub_n);
-            cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(float) * sub_k, sub_m);
-            cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(float) * sub_k, sub_m);    
+            cudaMallocPitch((void **) &a_sub_d, &converted_a_in_pitch, sizeof(float) * sub_k, sub_m);
+            cudaMallocPitch((void **) &b_sub_d, &converted_b_in_pitch, sizeof(float) * sub_n, sub_k);
+            lda = converted_a_in_pitch / sizeof(float);
+            ldb = converted_b_in_pitch / sizeof(float);
         }
     } else if (Atype == CUDA_R_64F) {
-        cudaMallocPitch((void **) &a_sub_d, &in_pitch, sizeof(double) * sub_k, sub_m);
-        cudaMallocPitch((void **) &b_sub_d, &in_pitch, sizeof(double) * sub_n, sub_k);    
+        cudaMallocPitch((void **) &a_sub_d, &a_in_pitch, sizeof(double) * sub_k, sub_m);
+        cudaMallocPitch((void **) &b_sub_d, &b_in_pitch, sizeof(double) * sub_n, sub_k);    
+        lda = a_in_pitch / sizeof(double);
+        ldb = b_in_pitch / sizeof(double);
     } else {
         printf("input type: %d is not supported\n", Atype);
         return;
     }
 
     cudaMallocPitch((void **) &c_sub_f, &out_pitch, sizeof(float) * sub_n, sub_m);
-    printf("in pitch size: %lu\n", in_pitch);   
-    printf("converted_in_pitch size: %lu\n", converted_in_pitch);
+    ldc = out_pitch / sizeof(float);
+
+    printf("a pitch: %lu, b pitch: %lu\n", a_in_pitch, b_in_pitch);   
+    printf("converted a pitch: %lu, b pitch: %lu\n", converted_a_in_pitch, converted_b_in_pitch);
     printf("out pitch size: %lu\n", out_pitch);
-    printf("temp_a address: %p\n", temp_a);
-    printf("temp_b address: %p\n", temp_b);
+    printf("lda: %lu, ldb: %lu, ldc: %lu\n", lda, ldb, ldc);
+    // printf("temp_a address: %p\n", temp_a);
+    // printf("temp_b address: %p\n", temp_b);
+
     for (i = 0; i < x; i += sub_m) {
         for (j = 0; j < y; j += sub_n) {
             cudaMemset2D(c_sub_f, out_pitch, 0, sub_n * sizeof(float), sub_m);
             for (k = 0; k < z; k += sub_k) {
                 gettimeofday(&h_start, NULL);
                 if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
-                    cudaMemcpy2D(temp_a, in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
-                    cudaMemcpy2D(temp_b, in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);
+                    cudaMemcpy2D(temp_a, a_in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
+                    cudaMemcpy2D(temp_b, b_in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);
                     if (Atype == CUDA_R_16F) {
-                        d2h_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_a, in_pitch, (half *) a_sub_d, converted_in_pitch, sub_m, sub_k);
-                        d2h_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_b, in_pitch, (half *) b_sub_d, converted_in_pitch, sub_k, sub_n);
+                        d2h_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_a, a_in_pitch, (half *) a_sub_d, converted_a_in_pitch, sub_m, sub_k);
+                        d2h_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_b, b_in_pitch, (half *) b_sub_d, converted_b_in_pitch, sub_k, sub_n);
                     } else { 
-                        d2f_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_a, in_pitch, (float *) a_sub_d, converted_in_pitch, sub_m, sub_k);
-                        d2f_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_b, in_pitch, (float *) b_sub_d, converted_in_pitch, sub_k, sub_n);
+                        d2f_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_a, a_in_pitch, (float *) a_sub_d, converted_a_in_pitch, sub_m, sub_k);
+                        d2f_kernel_pitch_2D<<<gridSize, blockSize>>>(temp_b, b_in_pitch, (float *) b_sub_d, converted_b_in_pitch, sub_k, sub_n);
                     }
                 } 
                 else { // CUDA_R_64F
-                    cudaMemcpy2D(a_sub_d, in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
-                    cudaMemcpy2D(b_sub_d, in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);    
+                    cudaMemcpy2D(a_sub_d, a_in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
+                    cudaMemcpy2D(b_sub_d, b_in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);    
                 } 
                 gettimeofday(&h_end, NULL);
                 h2d_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
@@ -650,13 +667,13 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
                 // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
                 // maybe that's because inside GPU it uses column major storage.
                 gettimeofday(&h_start, NULL);
-                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, Btype, sub_k, a_sub_d, Atype, sub_m, &beta, c_sub_f, Ctype, sub_m, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, Btype, ldb, a_sub_d, Atype, lda, &beta, c_sub_f, Ctype, ldc, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
                 cudaDeviceSynchronize();
                 gettimeofday(&h_end, NULL);
                 kernel_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
             }
             gettimeofday(&h_start, NULL);
-            cudaMemcpy2D((c + i * y + j), x * sizeof(float), c_sub_f, out_pitch, sizeof(float) * sub_n, sub_m, cudaMemcpyDeviceToHost);
+            cudaMemcpy2D((c + i * y + j), y * sizeof(float), c_sub_f, out_pitch, sizeof(float) * sub_n, sub_m, cudaMemcpyDeviceToHost);
 
             // for (ii = i, i_idx = 0; ii < (i + sub_n); ii++, i_idx++) {
             //     cudaMemcpyAsync((c + ii * y + j), (c_sub_f + i_idx * sub_n), sub_n * sizeof(float), cudaMemcpyDeviceToHost, stream[i_idx]);
@@ -666,6 +683,13 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
         }
     }  
     
+    for (i = 0; i < x; i++) {
+        for (j = 0; j < y; j++) {
+            printf("%f ", c[i*y+j]);
+        }
+        printf("\n");
+    }  
+    printf("\n");
     cublasDestroy(handle);
     
     // for (i = 0; i < sub_m; i++) {
