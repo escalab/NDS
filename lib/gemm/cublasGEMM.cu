@@ -48,6 +48,26 @@ __global__ void d2f_kernel_pitch_2D(const double *din, const size_t in_pitch, fl
 	}
 }
 
+__global__ void d2f_kernel_pitch(const double *din, const size_t in_pitch, float *dout, const size_t out_pitch, const size_t dsize, const size_t ncols) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx < dsize)
+	{
+        // size_t in_rows = dsize / ld_in;
+        // size_t out_rows = dsize / ld_out;
+        
+        size_t in_i = idx / ncols;
+        size_t in_j = idx % ncols;
+
+        size_t out_i = idx / ncols;
+        size_t out_j = idx % ncols;
+        double *in = (double *)((char*) din + in_i * in_pitch); // in_pitch = 512
+        float *out = (float *)((char*) dout + out_i * out_pitch);
+
+        out[out_j] = in[in_j];
+        // printf("%d: %lu %lu %lu %lu, %f %f\n", idx, in_i, in_j, out_i, out_j, in[out_j], out[in_j]);
+	}
+}
+
 __global__ void d2h_kernel_pitch_2D(const double *din, const size_t in_pitch, half *dout, const size_t out_pitch, const size_t nrows, const size_t ncols) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int idy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -684,11 +704,10 @@ void sequential_blockDgemm_2D(size_t x, size_t y, size_t z, size_t sub_m, size_t
     size_t i, j, k, ii, kk, i_idx, k_idx;
     double alpha = 1.0;
     double beta = 1.0;
-    double *a_sub_d, *b_sub_d, *c_sub_d, *c_d;
-    // float *c_sub_f;
-    float *c_f;
+    double *a_sub_d, *b_sub_d, *c_sub_d;
+    float *c_sub_f;
     size_t a_in_pitch, b_in_pitch, out_f_pitch, out_d_pitch;
-    double *c_h = (double *) malloc(sizeof(double) * x * y);
+
     cublasHandle_t handle;
     cublasCreate(&handle);
 
@@ -700,22 +719,20 @@ void sequential_blockDgemm_2D(size_t x, size_t y, size_t z, size_t sub_m, size_t
     cudaMallocPitch((void **) &a_sub_d, &a_in_pitch, sizeof(double) * sub_k, sub_m);
     cudaMallocPitch((void **) &b_sub_d, &b_in_pitch, sizeof(double) * sub_n, sub_k);
     cudaMallocPitch((void **) &c_sub_d, &out_d_pitch, sizeof(double) * sub_n, sub_m);
-
-    // cudaMallocPitch((void **) &c_sub_f, &out_f_pitch, sizeof(float) * sub_m * sub_n);
-
-    cudaMalloc((void **) &c_d, sizeof(double) * x * y);
-    cudaMalloc((void **) &c_f, sizeof(float) * x * y);
+    cudaMallocPitch((void **) &c_sub_f, &out_f_pitch, sizeof(float) * sub_n, sub_m);
 
     printf("a_in_pitch size: %lu\n", a_in_pitch); 
     printf("b_in_pitch size: %lu\n", b_in_pitch);   
   
     printf("out_d_pitch size: %lu\n", out_d_pitch);
-    // printf("out_f_pitch size: %lu\n", out_f_pitch);
+    printf("out_f_pitch size: %lu\n", out_f_pitch);
 
-    size_t dsize = x * y;
+    size_t dsize = sub_m * sub_n;
     size_t lda = a_in_pitch / sizeof(double);
     size_t ldb = b_in_pitch / sizeof(double);
-    size_t ldc = out_d_pitch / sizeof(double);
+    size_t ldc_d = out_d_pitch / sizeof(double);
+    size_t ldc_f = out_f_pitch / sizeof(float);
+    printf("ldc_d: %lu, ldc_f: %lu\n", ldc_d, ldc_f);
 
     for (i = 0; i < x; i += sub_m) {
         for (j = 0; j < y; j += sub_n) {
@@ -736,69 +753,30 @@ void sequential_blockDgemm_2D(size_t x, size_t y, size_t z, size_t sub_m, size_t
                 // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
                 // maybe that's because inside GPU it uses column major storage.
                 // cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, sub_k, a_sub_d, sub_m, &beta, c_sub_d, sub_m);
-                cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, ldb, a_sub_d, lda, &beta, c_sub_d, ldc);
-
+                cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d, ldb, a_sub_d, lda, &beta, c_sub_d, ldc_d);
                 // cudaMemcpy2D((c_d + i*y + k), y * sizeof(double), c_sub_d, out_d_pitch, sub_n * sizeof(double), sub_m, cudaMemcpyDeviceToHost);
                 // cudaMemcpy2D((c_d + k*y + j), y * sizeof(double), c_sub_d, out_d_pitch, sub_n * sizeof(double), sub_m, cudaMemcpyDeviceToHost);
             }
-            // printf("memcpy\n");
-            cudaMemcpy2D((c_d + i*y + j), y * sizeof(double), c_sub_d, out_d_pitch, sub_n * sizeof(double), sub_m, cudaMemcpyDeviceToDevice);
+            d2f_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_sub_d, out_d_pitch, c_sub_f, out_f_pitch, dsize, sub_n);
+            cudaMemcpy2D((c + i*y + j), y * sizeof(float), c_sub_f, out_f_pitch, sub_n * sizeof(float), sub_m, cudaMemcpyDeviceToHost);
         }
     }  
-    // cudaMemcpy(c_h, c_d, dsize * sizeof(double), cudaMemcpyDeviceToHost);
+
     // for (i = 0; i < x; i++) {
     //     for (j = 0; j < y; j++) {
-    //         printf("%f ", b[i*y+j]);          
+    //         printf("%f ", c[i*y+j]);
     //     }
     //     printf("\n");
     // }  
     // printf("\n");
- 
-    // for (i = 0; i < x; i++) {
-    //     for (j = 0; j < y; j++) {
-    //         printf("%f ", c_h[i*y+j]);          
-    //     }
-    //     printf("\n");
-    // }     
-       
-    // const float relativeTolerance = 1e-3;
-    // float relativeError;
-    // for (i = 0; i < x; i++) {
-    //     for (j = 0; j < y; j++) {
-    //         if (isnan(c_h[i*y + j])) {
-    //             printf("(%lu, %lu) is NaN\n", i, j);
-    //         }
-
-    //         if (isinf(c_h[i*y + j])) {
-    //             printf("(%lu, %lu) is inf\n", i, j);
-    //         }
-    //         relativeError = (a[i*y + j] - c_h[i*y + j]) / a[i*y + j];
-    //         if (fabs(relativeError) > relativeTolerance) {
-    //             printf("(%lu, %lu) = %f, supposed to be %f\n", i, j, c_h[i*y + j], a[i*y + j]); 
-    //             printf("TEST FAILED\n\n");
-    //         }            
-    //     }
-    // }   
-    // printf("TEST PASSED\n\n");
-
-    printf("conversion\n");
-    d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(c_d, c_f, dsize);
-    cudaMemcpy(c, c_f, dsize * sizeof(float), cudaMemcpyDeviceToHost);
+    // printf("conversion\n");
+    // cudaMemcpy(c, c_f, dsize * sizeof(float), cudaMemcpyDeviceToHost);
     cublasDestroy(handle);
 
-    // for (i = 0; i < x; i++) {
-    //     for (j = 0; j < y; j++) {
-    //         printf("%f ", c[i*y+j]);          
-    //     }
-    //     printf("\n");
-    // }     
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
     cudaFree(c_sub_d);
-    cudaFree(c_d);
-    cudaFree(c_f);
-    free(c_h);
-    // cudaFree(c_sub_f);
+    cudaFree(c_sub_f);
 }
 
 void sequential_blockDgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
