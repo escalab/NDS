@@ -16,6 +16,28 @@ __global__ void d2h_kernel(const double *din, half *dout, size_t dsize) {
 	}
 }
 
+// pitched memory address calculation.
+// T* pElement = (T*)((char*)BaseAddress + Row * pitch) + Column;
+__global__ void d2f_kernel_pitch(const double *din, const size_t in_pitch, const size_t col, float *dout, const size_t dsize) {
+    size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
+	if (idx < dsize)
+	{
+        size_t i = idx / col;
+        size_t j = idx % col;
+	    dout[idx] = ((double *) ((char*) din + i * in_pitch))[j];
+	}
+}
+
+__global__ void d2h_kernel_pitch(const double *din, const size_t in_pitch, const size_t col, half *dout, const size_t dsize) {
+    size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
+	if (idx < dsize)
+	{
+        size_t i = idx / col;
+        size_t j = idx % col;
+        dout[idx] = ((double *) ((char*) din + i * in_pitch))[j];
+	}
+}
+
 __global__ void h2f_kernel(half *din, float *dout, size_t dsize) {
 	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
 	if (idx < dsize)
@@ -291,9 +313,14 @@ void tensor_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n
     size_t cross_row = x * sub_k, cross_col = sub_m * sub_k;
     float alpha = 1.0;
     float beta = 1.0;
-    double *a_sub_d, *b_sub_d;
+    void *a_sub_d, *b_sub_d;
+    double *temp_a, *temp_b;
+
     float *c_sub_f;
     struct timeval h_start, h_end;
+    // assume input/output arrays are the same size and square matrix now
+    const size_t dsize = sub_m * sub_n;
+
     unsigned long long h2d_time = 0, d2h_time = 0, kernel_time = 0;
 
     cublasHandle_t handle;
@@ -305,8 +332,29 @@ void tensor_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n
     //     cudaStreamCreate(stream + i);
     // }
     
-    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
-    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);
+
+    if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
+        cudaMalloc((void **) &temp_a, sizeof(double) * sub_m * sub_k);
+        cudaMalloc((void **) &temp_b, sizeof(double) * sub_k * sub_n);    
+        if (Atype == CUDA_R_16F) {
+            printf("half type\n");
+            cudaMalloc((void **) &a_sub_d, sizeof(half) * sub_m * sub_k);
+            cudaMalloc((void **) &b_sub_d, sizeof(half) * sub_k * sub_n);
+            // cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
+            // cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
+        } else {
+            printf("float type\n");
+            cudaMalloc((void **) &a_sub_d, sizeof(float) * sub_m * sub_k);
+            cudaMalloc((void **) &b_sub_d, sizeof(float) * sub_k * sub_n);
+        }
+    } else if (Atype == CUDA_R_64F) {
+        cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k);
+        cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n);    
+    } else {
+        printf("input type: %d is not supported\n", Atype);
+        return;
+    }
+
     cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n);
 
     // custom block gemm
@@ -316,8 +364,20 @@ void tensor_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n
             for (k = 0; k < (z / sub_k); k++) {
                 // here we can use GPUDirect?
                 gettimeofday(&h_start, NULL);
-                cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
-                cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+                if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
+                    cudaMemcpy(temp_a, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
+                    cudaMemcpy(temp_b, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+                    if (Atype == CUDA_R_16F) {
+                        d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_a, (half *) a_sub_d, dsize);
+                        d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_b, (half *) b_sub_d, dsize);
+                    } else { 
+                        d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_a, (float *) a_sub_d, dsize);
+                        d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_b, (float *) b_sub_d, dsize);
+                    }
+                } else { // CUDA_R_64F
+                    cudaMemcpy(a_sub_d, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice);    
+                    cudaMemcpy(b_sub_d, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice);
+                } 
                 gettimeofday(&h_end, NULL);
                 h2d_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
                 // async execution (ref: https://forums.developer.nvidia.com/t/async-cublas/2837)
@@ -340,6 +400,12 @@ void tensor_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n
     // for (i = 0; i < z / sub_k; i++) {
     //     cudaStreamDestroy(stream[i]);
     // }
+
+    if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
+        cudaFree(temp_a);
+        cudaFree(temp_b);
+    } 
+    
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
     cudaFree(c_sub_f);
@@ -471,12 +537,16 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     size_t i, j, k, ii, kk, i_idx, k_idx;
     float alpha = 1.0;
     float beta = 1.0;
-    double *a_sub_d, *b_sub_d;
+    void *a_sub_d, *b_sub_d;
+    double *temp_a, *temp_b;
     float *c_sub_f;
     struct timeval h_start, h_end;
     unsigned long long h2d_time = 0, d2h_time = 0, kernel_time = 0;
     size_t in_pitch, out_pitch;
     cublasHandle_t handle;
+    // assume input/output arrays are the same size and square matrix now
+    const size_t dsize = sub_m * sub_n;
+
     cublasCreate(&handle);
     cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
 
@@ -486,27 +556,51 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     //     cudaStreamCreate(stream + i);
     // }
 
-    cudaMallocPitch((void **) &a_sub_d, &in_pitch, sizeof(double) * sub_k, sub_m);
-    cudaMallocPitch((void **) &b_sub_d, &in_pitch, sizeof(double) * sub_n, sub_k);
+    if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
+        cudaMallocPitch((void **) &temp_a, &in_pitch, sizeof(double) * sub_k, sub_m);
+        cudaMallocPitch((void **) &temp_b, &in_pitch, sizeof(double) * sub_k, sub_m);    
+        if (Atype == CUDA_R_16F) {
+            cudaMalloc((void **) &a_sub_d, sizeof(half) * sub_m * sub_k);
+            cudaMalloc((void **) &b_sub_d, sizeof(half) * sub_k * sub_n);
+            // cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
+            // cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(half) * sub_k, sub_m);
+        } else {
+            cudaMalloc((void **) &a_sub_d, sizeof(float) * sub_m * sub_k);
+            cudaMalloc((void **) &b_sub_d, sizeof(float) * sub_k * sub_n);
+            // cudaMallocPitch((void **) &a_sub_d, &converted_in_pitch, sizeof(float) * sub_k, sub_m);
+            // cudaMallocPitch((void **) &b_sub_d, &converted_in_pitch, sizeof(float) * sub_k, sub_m);    
+        }
+    } else if (Atype == CUDA_R_64F) {
+        cudaMallocPitch((void **) &a_sub_d, &in_pitch, sizeof(double) * sub_k, sub_m);
+        cudaMallocPitch((void **) &b_sub_d, &in_pitch, sizeof(double) * sub_n, sub_k);    
+    } else {
+        printf("input type: %d is not supported\n", Atype);
+        return;
+    }
+
     cudaMallocPitch((void **) &c_sub_f, &out_pitch, sizeof(float) * sub_n, sub_m);
     // printf("in pitch size: %lu\n", in_pitch);    
     // printf("out pitch size: %lu\n", out_pitch);
-
 
     for (i = 0; i < x; i += sub_m) {
         for (j = 0; j < y; j += sub_n) {
             cudaMemset(c_sub_f, 0, sub_m * sub_n * sizeof(float));
             for (k = 0; k < z; k += sub_k) {
                 gettimeofday(&h_start, NULL);
-                cudaMemcpy2D(a_sub_d, in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
-                // for (ii = i, i_idx = 0; ii < (i + sub_m); ii++, i_idx++) {
-                //     cudaMemcpyAsync((a_sub_d + i_idx * sub_n), (a + ii*y + k), sub_k * sizeof(double), cudaMemcpyHostToDevice, stream[i_idx]);
-                // }
-                cudaMemcpy2D(b_sub_d, in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);
-
-                // for (kk = k, k_idx = 0; kk < (k + sub_k); kk++, k_idx++) {
-                //     cudaMemcpyAsync((b_sub_d + k_idx * sub_n), (b + kk * y + j), sub_n * sizeof(double), cudaMemcpyHostToDevice, stream[k_idx]);
-                // }
+                if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
+                    cudaMemcpy2D(temp_a, in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
+                    cudaMemcpy2D(temp_b, in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);
+                    if (Atype == CUDA_R_16F) {
+                        d2h_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_a, in_pitch, sub_k, (half *) a_sub_d, dsize);
+                        d2h_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_b, in_pitch, sub_n, (half *) b_sub_d, dsize);
+                    } else { 
+                        d2f_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_a, in_pitch, sub_k, (float *) a_sub_d, dsize);
+                        d2f_kernel_pitch<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(temp_b, in_pitch, sub_n, (float *) b_sub_d, dsize);
+                    }
+                } else { // CUDA_R_64F
+                    cudaMemcpy2D(a_sub_d, in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice);
+                    cudaMemcpy2D(b_sub_d, in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice);    
+                } 
                 gettimeofday(&h_end, NULL);
                 h2d_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
                 // cublasDgemm EXPLANATION ------------------------------------------------
@@ -539,9 +633,15 @@ void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t s
     //     cudaStreamDestroy(stream[i]);
     // }
 
+    if (Atype == CUDA_R_16F || Atype == CUDA_R_32F) {
+        cudaFree(temp_a);
+        cudaFree(temp_b);
+    } 
+
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
     cudaFree(c_sub_f);
+
     printf("h2d time: %f ms\n", (float) h2d_time / 1000);
     printf("kernel time: %f ms\n", (float) kernel_time / 1000);
     printf("d2h time: %f ms\n", (float) d2h_time / 1000);
@@ -661,6 +761,7 @@ void wholeMatrix_GemmEx(size_t m, size_t n, size_t k, const double *a, const dou
     float beta = 0.0;
     void *a_d, *b_d;
     float *c_f;
+    // assume input/output arrays are the same size and square matrix now
     const size_t dsize = m * n;
 
     cublasHandle_t handle;

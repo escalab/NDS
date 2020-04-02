@@ -26,6 +26,7 @@
 #endif
 
 int verify(const float *C, const float *answer, int m, int n) {
+    // also need to consider floating point error
     const float relativeTolerance = 1e-3;
     int row, col;
     float relativeError;
