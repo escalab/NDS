@@ -111,7 +111,6 @@ void tensor_blockGemmEx_async_v3(size_t x, size_t y, size_t z, size_t sub_m, siz
     printf("num_streams: %lu\n", num_streams);
     size_t num_outstreams = 4;
     size_t num_instreams = 8;
-    size_t thread_num = 1024;
     cublasHandle_t handle[num_streams];
     cudaStream_t stream[num_streams];
     for (i = 0; i < num_streams; i++) {
@@ -122,12 +121,16 @@ void tensor_blockGemmEx_async_v3(size_t x, size_t y, size_t z, size_t sub_m, siz
     }
 
     int out_stream_index, in_stream_index;
-    double *a_sub_d, *b_sub_d;
+    
+    half *a_sub_d, *b_sub_d;
+    double *temp_a, *temp_b;
     float *c_sub_f;
     // here cannot exceed the GPU memory
-    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k * num_streams);
-    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n * num_streams);
+    cudaMalloc((void **) &a_sub_d, sizeof(half) * sub_m * sub_k * num_streams);
+    cudaMalloc((void **) &b_sub_d, sizeof(half) * sub_k * sub_n * num_streams);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n * num_streams);
+    cudaMalloc((void **) &temp_a, sizeof(double) * num_streams * sub_m * sub_k);
+    cudaMalloc((void **) &temp_b, sizeof(double) * num_streams * sub_k * sub_n);    
 
     // custom block gemm
     for (i = 0; i < (x / sub_m); i++) {
@@ -157,10 +160,11 @@ void tensor_blockGemmEx_async_v3(size_t x, size_t y, size_t z, size_t sub_m, siz
 
             if (num_streams > 1) {
                 gettimeofday(&h_start, NULL);
-                reduction_kernel<<<(sub_m*sub_n+thread_num-1)/thread_num, thread_num, 0, stream[out_stream_index]>>>(c_sub_f + out_stream_index * sub_m * sub_n, sub_m, sub_n, num_streams);
+                reduction_kernel<<<(sub_m*sub_n+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK, 0, stream[out_stream_index]>>>(c_sub_f + out_stream_index * sub_m * sub_n, sub_m, sub_n, num_streams);
                 gettimeofday(&h_end, NULL);
                 reduction_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);                
             }
+
             gettimeofday(&h_start, NULL);
             cudaMemcpyAsync((c + i * cross_row + j * cross_col), (c_sub_f + out_stream_index * sub_m * sub_n), sub_m * sub_n * sizeof(float), cudaMemcpyDeviceToHost, stream[out_stream_index]);
             gettimeofday(&h_end, NULL);
@@ -182,16 +186,21 @@ void tensor_blockGemmEx_async_v3(size_t x, size_t y, size_t z, size_t sub_m, siz
     printf("d2h time: %f ms\n", (float) d2h_time / 1000);
 }
 
+// outer loop runs asynchronously
+// assume the inputs are half precision now
 void tensor_blockGemmEx_async_v2(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
     const double *a, const double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
     size_t i, j, k;
     size_t cross_row = x * sub_k, cross_col = sub_m * sub_k;
     float alpha = 1.0;
     float beta = 1.0;
-    double *a_sub_d, *b_sub_d;
+    half *a_sub_d, *b_sub_d;
+    double *temp_a, *temp_b;
+
     float *c_sub_f;
     struct timeval h_start, h_end;
     unsigned long long h2d_time = 0, d2h_time = 0, kernel_time = 0, reduction_time = 0;
+    size_t dsize = sub_m * sub_n;
 
     // think about a way to use the power of 2 as the number of streams
     size_t memory_usage = sizeof(double) * sub_m * sub_k + sizeof(double) * sub_k * sub_n + sizeof(float) * sub_m * sub_n;
@@ -210,9 +219,11 @@ void tensor_blockGemmEx_async_v2(size_t x, size_t y, size_t z, size_t sub_m, siz
     int stream_index;
     
     // here cannot exceed the GPU memory
-    cudaMalloc((void **) &a_sub_d, sizeof(double) * sub_m * sub_k * num_streams);
-    cudaMalloc((void **) &b_sub_d, sizeof(double) * sub_k * sub_n * num_streams);
+    cudaMalloc((void **) &a_sub_d, sizeof(half) * sub_m * sub_k * num_streams);
+    cudaMalloc((void **) &b_sub_d, sizeof(half) * sub_k * sub_n * num_streams);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * sub_m * sub_n * num_streams);
+    cudaMalloc((void **) &temp_a, sizeof(double) * num_streams * sub_m * sub_k);
+    cudaMalloc((void **) &temp_b, sizeof(double) * num_streams * sub_k * sub_n);    
 
     // custom block gemm
     for (i = 0; i < (x / sub_m); i++) {
@@ -222,15 +233,17 @@ void tensor_blockGemmEx_async_v2(size_t x, size_t y, size_t z, size_t sub_m, siz
             for (k = 0; k < (z / sub_k); k++) {
                 // here we can use GPUDirect?
                 gettimeofday(&h_start, NULL);
-                cudaMemcpyAsync(a_sub_d + stream_index * sub_m * sub_k, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice, stream[stream_index]);    
-                cudaMemcpyAsync(b_sub_d + stream_index * sub_k * sub_n, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice, stream[stream_index]);
+                cudaMemcpyAsync(temp_a + stream_index * sub_m * sub_k, (a + i * cross_row + k * cross_col), sub_m * sub_k * sizeof(double), cudaMemcpyHostToDevice, stream[stream_index]);    
+                d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK, 0, stream[stream_index]>>>(temp_a + stream_index * sub_m * sub_k, a_sub_d + stream_index * sub_m * sub_k, dsize);
+                cudaMemcpyAsync(temp_b + stream_index * sub_k * sub_n, (b + k * cross_row + j * cross_col), sub_k * sub_n * sizeof(double), cudaMemcpyHostToDevice, stream[stream_index]);
+                d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK, 0, stream[stream_index]>>>(temp_b + stream_index * sub_m * sub_k, b_sub_d + stream_index * sub_m * sub_k, dsize);
                 gettimeofday(&h_end, NULL);
                 h2d_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
                 // async execution (ref: https://forums.developer.nvidia.com/t/async-cublas/2837)
                 // cudaDataType_t helps users to convert data inside the function call
                 
                 gettimeofday(&h_start, NULL);
-                cublasGemmEx(handle[stream_index], CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d + stream_index * sub_k * sub_n, Btype, sub_k, a_sub_d + stream_index * sub_m * sub_k, Atype, sub_m, &beta, c_sub_f + stream_index * sub_m * sub_n, Ctype, sub_m, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                cublasGemmEx(handle[stream_index], CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d + stream_index * sub_m * sub_n, Btype, sub_k, a_sub_d + stream_index * sub_m * sub_n, Atype, sub_m, &beta, c_sub_f + stream_index * sub_m * sub_n, Ctype, sub_m, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
                 gettimeofday(&h_end, NULL);
                 kernel_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
             }
@@ -247,15 +260,16 @@ void tensor_blockGemmEx_async_v2(size_t x, size_t y, size_t z, size_t sub_m, siz
             d2h_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
         }
     }
-    for (i = 0; i < x; i++) {
-        for (j = 0; j < y; j++) {
-            printf("%f ", c[i*y+j]);
-        }
-        printf("\n");
-    }  
-    printf("\n");
 
     cudaDeviceSynchronize();
+
+    // for (i = 0; i < x; i++) {
+    //     for (j = 0; j < y; j++) {
+    //         printf("%f ", c[i*y+j]);
+    //     }
+    //     printf("\n");
+    // }  
+    // printf("\n");
     for (i = 0; i < num_streams; i++) {
         cublasDestroy(handle[i]);
         cudaStreamDestroy(stream[i]);
