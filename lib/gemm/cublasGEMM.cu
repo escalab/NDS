@@ -15,6 +15,20 @@
     }                                                       \
   } while (0)
 
+size_t highestPowerof2(size_t n) 
+{ 
+    size_t res = 0; 
+    for (size_t i=n; i>=1; i--) 
+    { 
+        // If i is a power of 2 
+        if ((i & (i-1)) == 0) 
+        { 
+            res = i; 
+            break; 
+        } 
+    } 
+    return res; 
+} 
 
 __global__ void d2f_kernel(const double *din, float *dout, size_t dsize) {
 	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
@@ -240,13 +254,19 @@ void tensor_blockGemmEx_async_v2(size_t x, size_t y, size_t z, size_t sub_m, siz
     unsigned long long h2d_time = 0, d2h_time = 0, kernel_time = 0;
     size_t dsize = sub_m * sub_n;
 
+    cublasHandle_t handle[MAX_STREAMS];
+    cudaStream_t stream[MAX_STREAMS];
     // think about a way to use the power of 2 as the number of streams
-    size_t memory_usage = sizeof(double) * sub_m * sub_k + sizeof(double) * sub_k * sub_n + sizeof(float) * sub_m * sub_n;
-    size_t num_streams = (MAX_STREAMS < ((size_t) 8192 * 1048576 / (memory_usage))) ? MAX_STREAMS : ((size_t) 8192 * 1048576 / (memory_usage));
+    size_t memory_usage = sizeof(double) * sub_m * sub_k + sizeof(double) * sub_k * sub_n + sizeof(float) * sub_m * sub_n + sizeof(half) * sub_m * sub_k + sizeof(half) * sub_k * sub_n;
+    size_t num_streams = 1;
+    printf("memory usage for 1 stream: %lu\n", memory_usage);
+    while (num_streams * memory_usage < (size_t) 4096 * 1048576 && num_streams < MAX_STREAMS) {
+        num_streams <<= 1;
+    }
+    // num_streams = highestPowerof2(num_streams);
     printf("num_streams: %lu\n", num_streams);
 
-    cublasHandle_t handle[num_streams];
-    cudaStream_t stream[num_streams];
+
     for (i = 0; i < num_streams; i++) {
         cublasCreate(handle + i);
         cudaStreamCreate(stream + i);
