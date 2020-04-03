@@ -136,7 +136,6 @@ int main(int argc, char** argv) {
     sequential_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 5
     sequential_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, c);
-
 #elif ALGO == 6
     tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #elif ALGO == 7
