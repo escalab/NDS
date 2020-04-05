@@ -7,7 +7,7 @@ int main(int argc, char** argv) {
     int i, j, ii, jj, sub_i, offset, n, sub_n;
     int count=0;
     FILE *fptr;
-    long *sub_matrix;
+    float *sub_matrix;
     long duration;
     struct timeval h_start, h_end;
     
@@ -20,16 +20,16 @@ int main(int argc, char** argv) {
     n = atoi(argv[2]);
     sub_n = atoi(argv[3]);
 
-    sub_matrix = (long*) malloc(sub_n * sub_n * sizeof(long));
+    sub_matrix = (float*) malloc(sub_n * sub_n * sizeof(float));
 
     gettimeofday(&h_start, NULL);
     for (i = 0; i < n * n; i+= sub_n * sub_n) {
-        fseek(fptr, i * sizeof(long), SEEK_SET);
-        count += fread(sub_matrix, sizeof(long), sub_n * sub_n, fptr);
+        fseek(fptr, i * sizeof(float), SEEK_SET);
+        count += fread(sub_matrix, sizeof(float), sub_n * sub_n, fptr);
 #ifdef DEBUG
         for(ii = 0; ii < sub_n; ii++) {
             for (jj = 0; jj < sub_n; jj++) {
-                printf("%ld ", sub_matrix[ii * sub_n + jj]);
+                printf("%f ", sub_matrix[ii * sub_n + jj]);
             }
             printf("\n");
         }

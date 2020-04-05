@@ -1,0 +1,80 @@
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 16384
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 3803.925049 ms
+kernel time: 2024.958984 ms
+d2h time: 1308.670044 ms
+computation duration: 7408.562988 ms
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 8192
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 7293.756836 ms
+kernel time: 1827.499023 ms
+d2h time: 1309.749023 ms
+computation duration: 10682.754883 ms
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 4096
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 14324.635742 ms
+kernel time: 2219.862061 ms
+d2h time: 1341.097046 ms
+computation duration: 18138.144531 ms
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 2048
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 28611.308594 ms
+kernel time: 3121.360107 ms
+d2h time: 1370.885986 ms
+computation duration: 33359.808594 ms
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 1024
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 58127.328125 ms
+kernel time: 6637.108887 ms
+d2h time: 1475.152954 ms
+computation duration: 66499.734375 ms
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 512
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 124078.718750 ms
+kernel time: 30857.341797 ms
+d2h time: 1782.729004 ms
+computation duration: 157014.093750 ms
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 256
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 285135.968750 ms
+kernel time: 112305.359375 ms
+d2h time: 2012.680054 ms
+computation duration: 399982.906250 ms
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 128
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 815577.812500 ms
+kernel time: 316196.000000 ms
+d2h time: 3089.943115 ms
+computation duration: 1136525.250000 ms
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 64
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 2670299.000000 ms
+kernel time: 1262745.750000 ms
+d2h time: 6517.894043 ms
+computation duration: 3948601.500000 ms
+./cublas_perftest_7 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 32
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 7
+h2d time: 15031540.000000 ms
+kernel time: 9138890.000000 ms
+d2h time: 18442.480469 ms
+computation duration: 24248702.000000 ms

@@ -10,6 +10,10 @@
 // for timing
 #include <sys/time.h>
 
+// for checking nan
+#include <math.h>
+
+
 // ALGO 0: wholeMatrix_Sgemm
 // ALGO 1: wholeMatrix_Sgemm_half
 // ALGO 2: sequential_blockSgemm
@@ -22,17 +26,27 @@
 #endif
 
 int verify(const float *C, const float *answer, int m, int n) {
+    // also need to consider floating point error
     const float relativeTolerance = 1e-3;
     int row, col;
     float relativeError;
     for(row = 0; row < m; ++row) {
         for(col = 0; col < n; ++col) {
+            if (isnan(C[row*n + col])) {
+                printf("(%d, %d) is NaN\n", row, col);
+                return 0; 
+            }
+
+            if (isinf(C[row*n + col])) {
+                printf("(%d, %d) is inf\n", row, col);
+                return 0; 
+            }
             relativeError = (answer[row*n + col] - C[row*n + col]) / answer[row*n + col];
             if (fabs(relativeError) > relativeTolerance) {
                 printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], answer[row*n + col]); 
                 printf("TEST FAILED\n\n");
                 return 0;
-            }
+            }    
         }
     }
     printf("TEST PASSED\n\n");
@@ -47,7 +61,7 @@ int main(int argc, char** argv) {
     struct timeval h_start, h_end;
     long duration;
 
-#if ALGO >= 4
+#if ALGO >= 6
     int sub_n;
     int a_tensor_fd, b_tensor_fd;
     double *a_tensor, *b_tensor;
@@ -108,25 +122,36 @@ int main(int argc, char** argv) {
 
     printf("calculating the result of the sequential format\n");
     memset(c, 0, n * n * sizeof(float));
+    printf("running algorithm %d\n", ALGO);
     gettimeofday(&h_start, NULL);
 #if ALGO == 0
     wholeMatrix_Sgemm(n, n, n, a, b, c);
 #elif ALGO == 1
     wholeMatrix_Sgemm_half(n, n, n, a, b, c);
 #elif ALGO == 2
-    sequential_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    sequential_blockDgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 3
-    sequential_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    sequential_blockDgemm_2D(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 4
-    tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+    sequential_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 5
+    sequential_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+#elif ALGO == 6
+    tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+#elif ALGO == 7
     tensor_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+#elif ALGO == 8
+    tensor_blockSgemm_half_async(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+#elif ALGO == 9
+    tensor_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
+#elif ALGO == 10
+    tensor_blockSgemm_half_async_v3(n, n, n, sub_n, sub_n, sub_n, a_tensor, b_tensor, c);
 #endif
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
 
-#if ALGO >= 4
+#if ALGO >= 6
     printf("Reformat from tensor to sequential...\n");
     int count = 0;
     gettimeofday(&h_start, NULL);
@@ -153,12 +178,12 @@ int main(int argc, char** argv) {
     if (is_passed && need_output) {
         char filename[64];
         FILE *fptr;
-#if ALGO >= 4
-        printf("writing tensor format answer to %s\n", filename);
+#if ALGO >= 6
         sprintf(filename, "ans_block_%d_%d.bin", n, sub_n);
+        printf("writing tensor format answer to %s\n", &filename[0]);
 #else
-        printf("writing sequential answer to %s\n", filename);
         sprintf(filename, "ans_%d.bin", n);
+        printf("writing sequential answer to %s\n", &filename[0]);
 #endif
         fptr = fopen(filename, "wb");
         fwrite(c, sizeof(float), n * n, fptr);
@@ -199,7 +224,7 @@ int main(int argc, char** argv) {
     free(answer_c);
     free(c);
 
-#if ALGO >= 4
+#if ALGO >= 6
     munmap(a_tensor, sizeof(double) * n * n);
     munmap(b_tensor, sizeof(double) * n * n);
     close(a_tensor_fd);

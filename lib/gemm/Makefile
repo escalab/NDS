@@ -1,5 +1,5 @@
 NVCC        = nvcc
-NVCC_FLAGS  = -O3 -I/usr/local/cuda/include -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
+NVCC_FLAGS  = -O3 -I. -I/usr/local/cuda/include -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
 # LD_FLAGS    = -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static
 
 TARGET=libcublasGEMM.so
