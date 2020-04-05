@@ -1,0 +1,100 @@
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 16384
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 6442450944
+num_streams: 1
+h2d time: 4844.094238 ms
+kernel time: 0.279000 ms
+d2h time: 2286.385986 ms
+computation duration: 7484.878906 ms
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 8192
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 1610612736
+num_streams: 4
+h2d time: 8687.791016 ms
+kernel time: 1.413000 ms
+d2h time: 1744.615967 ms
+computation duration: 10708.996094 ms
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 4096
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 402653184
+num_streams: 16
+h2d time: 16206.309570 ms
+kernel time: 8.934000 ms
+d2h time: 1581.058960 ms
+computation duration: 18087.429688 ms
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 2048
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 100663296
+num_streams: 64
+h2d time: 30592.673828 ms
+kernel time: 68.305000 ms
+d2h time: 1520.546997 ms
+computation duration: 32501.927734 ms
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 1024
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 25165824
+num_streams: 64
+h2d time: 57800.960938 ms
+kernel time: 960.929993 ms
+d2h time: 1616.094971 ms
+computation duration: 60698.804688 ms
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 512
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 6291456
+num_streams: 64
+h2d time: 114083.734375 ms
+kernel time: 2304.711914 ms
+d2h time: 2130.614014 ms
+computation duration: 118848.484375 ms
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 256
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 1572864
+num_streams: 64
+h2d time: 243769.437500 ms
+kernel time: 8702.041992 ms
+d2h time: 2851.517090 ms
+computation duration: 255868.031250 ms
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 128
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 393216
+num_streams: 64
+h2d time: 631830.750000 ms
+kernel time: 65322.628906 ms
+d2h time: 3848.019043 ms
+computation duration: 702938.375000 ms
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 64
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 98304
+num_streams: 64
+h2d time: 2099154.000000 ms
+kernel time: 491187.062500 ms
+d2h time: 7707.776855 ms
+computation duration: 2607523.000000 ms
+./cublas_perftest_9 ../../data/output_double_32768_A.bin ../../data/output_double_32768_B.bin 32768 32
+memory usage: input: 17179869184 bytes, output: 4294967296 bytes
+calculating the answer...
+running algorithm 9
+memory usage for 1 stream: 24576
+num_streams: 64
+h2d time: 12170137.000000 ms
+kernel time: 3967391.750000 ms
+d2h time: 23315.748047 ms
+computation duration: 16222654.000000 ms

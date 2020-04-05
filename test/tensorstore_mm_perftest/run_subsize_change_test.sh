@@ -1,7 +1,9 @@
 #!/bin/bash
 clean_cache="free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
 # prog_arr=("cublas_perftest_3" "cublas_perftest_5")
-prog_arr=("cublas_perftest_5" "cublas_perftest_7" "cublas_perftest_9")
+# prog_arr=("cublas_perftest_5" "cublas_perftest_7" "cublas_perftest_9")
+prog_arr=("cublas_perftest_9")
+
 matrix_size=32768
 submatrix_size=16384
 end_size=32

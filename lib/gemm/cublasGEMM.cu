@@ -1,7 +1,7 @@
 #include "cublasGEMM.h"
 #include <helper_cuda.h>
 
-#define MAX_STREAMS 32
+#define MAX_STREAMS 64
 
 #define checkKernelErrors(expr)                             \
   do {                                                      \
@@ -14,21 +14,6 @@
       abort();                                              \
     }                                                       \
   } while (0)
-
-size_t highestPowerof2(size_t n) 
-{ 
-    size_t res = 0; 
-    for (size_t i=n; i>=1; i--) 
-    { 
-        // If i is a power of 2 
-        if ((i & (i-1)) == 0) 
-        { 
-            res = i; 
-            break; 
-        } 
-    } 
-    return res; 
-} 
 
 __global__ void d2f_kernel(const double *din, float *dout, size_t dsize) {
 	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
