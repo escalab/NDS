@@ -317,6 +317,8 @@ void tensor_blockGemmEx_async_v2(size_t x, size_t y, size_t z, size_t sub_m, siz
         cublasDestroy(handle[i]);
         cudaStreamDestroy(stream[i]);
     }
+    cudaFree(temp_a);
+    cudaFree(temp_b);
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
     cudaFree(c_sub_f);
@@ -646,6 +648,136 @@ void tensor_blockDgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n,
     cudaFree(b_sub_d);
     cudaFree(c_sub_d);
     cudaFree(c_sub_f);
+}
+
+// outer loop runs asynchronously
+// assume the inputs are half precision now
+void sequential_blockGemmEx_async_v2(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
+    const double *a, const double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype) {
+    size_t i, j, k, ii, kk, i_idx, k_idx;
+    float alpha = 1.0;
+    float beta = 1.0;
+    half *a_sub_d, *b_sub_d;
+    double *temp_a, *temp_b;
+    float *c_sub_f;
+    struct timeval h_start, h_end;
+    unsigned long long h2d_time = 0, d2h_time = 0, kernel_time = 0;
+    size_t a_in_pitch, converted_a_in_pitch;
+    size_t b_in_pitch, converted_b_in_pitch;
+    size_t out_pitch;
+    cublasHandle_t handle[MAX_STREAMS];
+    cudaStream_t stream[MAX_STREAMS];
+    // think about a way to use the power of 2 as the number of streams
+    size_t memory_usage = sizeof(double) * sub_m * sub_k + sizeof(double) * sub_k * sub_n + sizeof(float) * sub_m * sub_n + sizeof(half) * sub_m * sub_k + sizeof(half) * sub_k * sub_n;
+    size_t num_streams = 1;
+    printf("memory usage for 1 stream: %lu\n", memory_usage);
+    while (num_streams * memory_usage < (size_t) 4096 * 1048576 && num_streams < MAX_STREAMS) {
+        num_streams <<= 1;
+    }
+    printf("num_streams: %lu\n", num_streams);
+
+    for (i = 0; i < num_streams; i++) {
+        cublasCreate(handle + i);
+        cudaStreamCreate(stream + i);
+        cublasSetMathMode(handle[i], CUBLAS_TENSOR_OP_MATH);
+        cublasSetStream(handle[i], stream[i]);
+    }
+
+    dim3 gridSize((sub_m+32-1)/32, (sub_n+32-1)/32);
+    dim3 blockSize(32, 32);
+
+    cudaMallocPitch((void **) &a_sub_d, &converted_a_in_pitch, sizeof(half) * sub_k, sub_m * num_streams);
+    cudaMallocPitch((void **) &b_sub_d, &converted_b_in_pitch, sizeof(half) * sub_n, sub_k * num_streams);
+    cudaMallocPitch((void **) &c_sub_f, &out_pitch, sizeof(float) * sub_n, sub_m * num_streams);
+    cudaMallocPitch((void **) &temp_a, &a_in_pitch, sizeof(double) * sub_k, sub_m * num_streams);
+    cudaMallocPitch((void **) &temp_b, &b_in_pitch, sizeof(double) * sub_n, sub_k * num_streams);    
+
+    size_t lda;
+    size_t ldb;
+    size_t ldc;
+    lda = converted_a_in_pitch / sizeof(half);
+    ldb = converted_b_in_pitch / sizeof(half);
+    ldc = out_pitch / sizeof(float);
+
+    half *a_sub_d_ptr, *b_sub_d_ptr;
+    double *temp_a_ptr, *temp_b_ptr;
+    float *c_sub_f_ptr;
+    printf("a pitch: %lu, b pitch: %lu\n", a_in_pitch, b_in_pitch);   
+    printf("converted a pitch: %lu, b pitch: %lu\n", converted_a_in_pitch, converted_b_in_pitch);
+    printf("out pitch size: %lu\n", out_pitch);
+    printf("lda: %lu, ldb: %lu, ldc: %lu\n", lda, ldb, ldc);
+    printf("temp_a address: %p\n", temp_a);
+    printf("temp_b address: %p\n", temp_b);
+    
+    // pitched memory address calculation.
+    // T* pElement = (T*)((char*)BaseAddress + Row * pitch) + Column;
+    // float* element = (float*)((char*)devPtr + r * pitch + c * sizeof(float));
+    int stream_index;
+    for (i = 0; i < x; i += sub_m) {
+        for (j = 0; j < y; j += sub_n) {
+            stream_index = j % num_streams;
+            c_sub_f_ptr = (float *)((char*) c_sub_f + stream_index * sub_n * out_pitch);
+            cudaMemset2DAsync(c_sub_f_ptr, out_pitch, 0, sub_n * sizeof(float), sub_m, stream[stream_index]);
+            for (k = 0; k < z; k += sub_k) {
+                temp_a_ptr = (double *)((char*) temp_a + stream_index * sub_k * a_in_pitch);
+                temp_b_ptr = (double *)((char*) temp_b + stream_index * sub_n * b_in_pitch);
+                a_sub_d_ptr = (half *)((char*) a_sub_d + stream_index * sub_k * converted_a_in_pitch);
+                b_sub_d_ptr = (half *)((char*) b_sub_d + stream_index * sub_n * converted_b_in_pitch);
+
+                gettimeofday(&h_start, NULL);
+                cudaMemcpy2DAsync(temp_a_ptr, a_in_pitch, (a + i * y + k), z * sizeof(double), sizeof(double) * sub_k, sub_m, cudaMemcpyHostToDevice, stream[stream_index]);
+                d2h_kernel_pitch_2D<<<gridSize, blockSize, 0, stream[stream_index]>>>(temp_a_ptr, a_in_pitch, (half *) a_sub_d_ptr, converted_a_in_pitch, sub_m, sub_k);
+                cudaMemcpy2DAsync(temp_b_ptr, b_in_pitch, (b + k * y + j), y * sizeof(double), sizeof(double) * sub_n, sub_k, cudaMemcpyHostToDevice, stream[stream_index]);
+                d2h_kernel_pitch_2D<<<gridSize, blockSize, 0, stream[stream_index]>>>(temp_b_ptr, b_in_pitch, (half *) b_sub_d_ptr, converted_b_in_pitch, sub_k, sub_n);
+                gettimeofday(&h_end, NULL);
+                h2d_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
+                // cublasDgemm EXPLANATION ------------------------------------------------
+                // the memory layout is different from we know
+                // a = [0 1; b = [3 2; 
+                //      2 3]      1 0]
+                // if use a_d then b_d, c[0][0] will be a[0, 0] * b[0, 0] + a[1, 0] * b[0, 1] = 4
+                // with b_d then a_d, c[0][0] will be a[0, 0] * b[0, 0] + a[0, 1] * b[1, 0] = 1
+                // maybe that's because inside GPU it uses column major storage.
+                gettimeofday(&h_start, NULL);
+                cublasGemmEx(handle[stream_index], CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_n, sub_k, &alpha, b_sub_d_ptr, Btype, ldb, a_sub_d_ptr, Atype, lda, &beta, c_sub_f_ptr, Ctype, ldc, computetype, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                gettimeofday(&h_end, NULL);
+                kernel_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);            
+            }
+            gettimeofday(&h_start, NULL);
+            cudaMemcpy2DAsync((c + i * y + j), y * sizeof(float), c_sub_f_ptr, out_pitch, sizeof(float) * sub_n, sub_m, cudaMemcpyDeviceToHost, stream[stream_index]);
+            gettimeofday(&h_end, NULL);
+            d2h_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);              
+        }
+    }  
+    
+    cudaDeviceSynchronize();
+    // for (i = 0; i < x; i++) {
+    //     for (j = 0; j < y; j++) {
+    //         printf("%f ", c[i*y+j]);
+    //     }
+    //     printf("\n");
+    // }  
+    // printf("\n");
+    for (i = 0; i < num_streams; i++) {
+        cublasDestroy(handle[i]);
+        cudaStreamDestroy(stream[i]);
+    }
+
+    cudaFree(temp_a);
+    cudaFree(temp_b);
+
+    cudaFree(a_sub_d);
+    cudaFree(b_sub_d);
+    cudaFree(c_sub_f);
+
+    printf("h2d time: %f ms\n", (float) h2d_time / 1000);
+    printf("kernel time: %f ms\n", (float) kernel_time / 1000);
+    printf("d2h time: %f ms\n", (float) d2h_time / 1000);
+}
+
+void sequential_blockSgemm_half_async_v2(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 
+    const double *a, const double *b, float *c) {
+    sequential_blockGemmEx_async_v2(x, y, z, sub_m, sub_n, sub_k, a, b, c, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F);
 }
 
 void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, 

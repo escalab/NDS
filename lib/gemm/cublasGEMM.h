@@ -25,6 +25,8 @@ void tensor_blockSgemm_half(size_t x, size_t y, size_t z, size_t sub_m, size_t s
 void tensor_blockSgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, const double *a, const double *b, float *c);
 void tensor_blockDgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, const double *a, const double *b, float *c);
 
+void sequential_blockSgemm_half_async_v2(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, const double *a, const double *b, float *c);
+
 void sequential_blockGemmEx(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, const double *a, const double *b, float *c, cudaDataType_t Atype, cudaDataType_t Btype, cudaDataType_t Ctype, cudaDataType_t computetype);
 void sequential_blockSgemm_half(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, const double *a, const double *b, float *c);
 void sequential_blockSgemm(size_t x, size_t y, size_t z, size_t sub_m, size_t sub_n, size_t sub_k, const double *a, const double *b, float *c);

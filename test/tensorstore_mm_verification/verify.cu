@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
 #elif ALGO == 3
     sequential_blockDgemm_2D(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 4
-    sequential_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, c);
+    sequential_blockSgemm_half_async_v2(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 5
     sequential_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, c);
 #elif ALGO == 6
