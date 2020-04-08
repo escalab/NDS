@@ -702,12 +702,12 @@ void sequential_blockGemmEx_async_v2(size_t x, size_t y, size_t z, size_t sub_m,
     half *a_sub_d_ptr, *b_sub_d_ptr;
     double *temp_a_ptr, *temp_b_ptr;
     float *c_sub_f_ptr;
-    printf("a pitch: %lu, b pitch: %lu\n", a_in_pitch, b_in_pitch);   
-    printf("converted a pitch: %lu, b pitch: %lu\n", converted_a_in_pitch, converted_b_in_pitch);
-    printf("out pitch size: %lu\n", out_pitch);
-    printf("lda: %lu, ldb: %lu, ldc: %lu\n", lda, ldb, ldc);
-    printf("temp_a address: %p\n", temp_a);
-    printf("temp_b address: %p\n", temp_b);
+    // printf("a pitch: %lu, b pitch: %lu\n", a_in_pitch, b_in_pitch);   
+    // printf("converted a pitch: %lu, b pitch: %lu\n", converted_a_in_pitch, converted_b_in_pitch);
+    // printf("out pitch size: %lu\n", out_pitch);
+    // printf("lda: %lu, ldb: %lu, ldc: %lu\n", lda, ldb, ldc);
+    // printf("temp_a address: %p\n", temp_a);
+    // printf("temp_b address: %p\n", temp_b);
     
     // pitched memory address calculation.
     // T* pElement = (T*)((char*)BaseAddress + Row * pitch) + Column;
