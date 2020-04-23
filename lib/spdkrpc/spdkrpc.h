@@ -40,6 +40,3 @@ int spdk_rpc_connect(struct JSONRPCClient *client);
 // json_parser.c
 char *create_get_tensorstore_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y);
 char *parse_get_tensorstore_matrix_json(const char* respond_string, int pid);
-
-// util.c
-void free_mem(void *ptr);
