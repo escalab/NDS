@@ -86,6 +86,10 @@ char *parse_get_tensorstore_matrix_json(const char* respond_string, int pid) {
     unsigned long *data_map_addr;
     char *data;
 
+    struct timeval g_start, g_end;
+    uint64_t g_duration;
+    
+	gettimeofday(&g_start, NULL);
     object_json = cJSON_Parse(respond_string);
     if (object_json == NULL)
     {
@@ -112,7 +116,15 @@ char *parse_get_tensorstore_matrix_json(const char* respond_string, int pid) {
         data_map_addr[atoi(addr->string)] = (unsigned long) addr->valuedouble;
     }
 
+    gettimeofday(&g_end, NULL);
+    g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
+    printf("parse string to JSON elapsed time: %f s\n", (double) g_duration / 1000000);
+
+	gettimeofday(&g_start, NULL);
     data = read_from_spdk(pid, file_size, parts, data_map_addr, NULL);
+    gettimeofday(&g_end, NULL);
+    g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
+    printf("copy data from SPDK time: %f s\n", (double) g_duration / 1000000);
     // DEBUG_PRINT("parts: %d\n", parts);
     // DEBUG_PRINT("uint64_t _BASE_ADDR: %lx\n", reader->_BASE_ADDR);
     // DEBUG_PRINT("uint32_t_BLOCK_SIZE: %u\n", reader->_BLOCK_SIZE);

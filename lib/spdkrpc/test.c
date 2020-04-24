@@ -6,7 +6,7 @@
 int main(int argc, char **argv) {
     // SPDK RPC part
     char *request_string, *data, *original_data;
-    char *buf, *response;
+    char *buf, *response, *ptr;
     int pid, fd, rc;
     uint64_t i, file_size, g_duration;
     struct stat st;
@@ -19,6 +19,8 @@ int main(int argc, char **argv) {
         .addr = "/var/tmp/spdk.sock",
         .port = 5260
     };
+    int numBytesRecv = 0;
+    size_t buf_size = 4096; 
 
     if (argc < 3) {
         printf("usage: %s <SPDK Server PID> <verify file path>\n", argv[0]);
@@ -33,46 +35,53 @@ int main(int argc, char **argv) {
         return rc;
     }
 
-	gettimeofday(&g_start, NULL);
     request_string = create_get_tensorstore_matrix_json_string(&client, 0, 0, 0);
     printf("%s\n", request_string);
     send(client.sock, request_string, strlen(request_string), 0);
 
-    int numBytesRecv = 0;
-    size_t buf_size = 4096; 
     buf = calloc(buf_size, sizeof(char));
     response = calloc(33554432, sizeof(char));    
-    char *ptr = response;
+    ptr = response;
 
-    memset(buf, 0, buf_size);
-    numBytesRecv = recv(client.sock, buf, buf_size, 0);
-    printf("numBytesRecv %d\n", numBytesRecv);
-    if (numBytesRecv < 0) {
-        printf("error receive\n");
-        exit(1);
-    }
-    memcpy(ptr, buf, numBytesRecv);
-    ptr += numBytesRecv;
-    while (numBytesRecv == buf_size || numBytesRecv == 2176) {
-        // printf("numBytesRecv %d\n", numBytesRecv);
+	gettimeofday(&g_start, NULL);
+    // TODO: how to know the last receive is coming?
+    do {
         memset(buf, 0, buf_size);
         numBytesRecv = recv(client.sock, buf, buf_size, 0);
+        // printf("numBytesRecv %d\n", numBytesRecv);
         if (numBytesRecv < 0) {
             printf("error receive\n");
             exit(1);
         }
-        if (numBytesRecv == 0) {
-            break;
-        }
         memcpy(ptr, buf, numBytesRecv);
         ptr += numBytesRecv;
-    }
+    } while (numBytesRecv == buf_size || numBytesRecv == 2176);
+
+    gettimeofday(&g_end, NULL);
+    g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
+    printf("receive response elapsed time: %f s\n", (double) g_duration / 1000000);
+
+    // {
+    //     // printf("numBytesRecv %d\n", numBytesRecv);
+    //     memset(buf, 0, buf_size);
+    //     numBytesRecv = recv(client.sock, buf, buf_size, 0);
+    //     if (numBytesRecv < 0) {
+    //         printf("error receive\n");
+    //         exit(1);
+    //     }
+    //     if (numBytesRecv == 0) {
+    //         break;
+    //     }
+    //     memcpy(ptr, buf, numBytesRecv);
+    //     ptr += numBytesRecv;
+    // }
 
     // printf("response %s\n", response);
-    printf("parse response and read the memory map\n");
+    gettimeofday(&g_start, NULL);
     data = parse_get_tensorstore_matrix_json(response, pid);
     gettimeofday(&g_end, NULL);
     g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
+    printf("parse response and read the memory map elapsed time: %f s\n", (double) g_duration / 1000000);
 
     if (data == NULL) {
         printf("parse incorrect\n");
@@ -96,7 +105,7 @@ int main(int argc, char **argv) {
     if (rc) {
         printf("Test Failed\n");
     } else {
-        printf("Test Passed, elapsed time: %f s\n", (double) g_duration / 1000000);
+        printf("Test Passed\n");
     }
 
     free(request_string);
