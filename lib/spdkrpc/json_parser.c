@@ -140,3 +140,32 @@ char *parse_get_tensorstore_matrix_json(const char* respond_string, int pid) {
     free(data_map_addr);
     return data;
 }
+
+size_t get_tensorstore_matrix_return_size(const char* respond_string) {
+    cJSON *object_json = NULL;
+    const cJSON *result = NULL;
+    const cJSON *success = NULL;
+    const cJSON *size = NULL;
+
+    object_json = cJSON_Parse(respond_string);
+    if (object_json == NULL)
+    {
+        const char *error_ptr = cJSON_GetErrorPtr();
+        if (error_ptr != NULL)
+        {
+            fprintf(stderr, "Error before: %s\n", error_ptr);
+        }
+        cJSON_Delete(object_json);
+        return 0;
+    }
+    result = cJSON_GetObjectItemCaseSensitive(object_json, "result");
+    success = cJSON_GetObjectItemCaseSensitive(result, "success");
+    size = cJSON_GetObjectItemCaseSensitive(result, "size");
+    if (success->valueint != 1) {
+        fprintf(stderr, "SPDK RPC call is failed\n");
+        cJSON_Delete(object_json);
+        return 0;
+
+    }
+    return (size_t) size->valuedouble;
+}
