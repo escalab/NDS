@@ -22,6 +22,10 @@ int main(int argc, char **argv) {
     int numBytesRecv = 0;
     size_t buf_size = 4096; 
 
+    char *hugepage_filename = "/dev/hugepages/tensorstore";
+    int hugepage_fd;
+    char *hugepage_addr;
+
     if (argc < 3) {
         printf("usage: %s <SPDK Server PID> <verify file path>\n", argv[0]);
         exit(1);
@@ -35,27 +39,44 @@ int main(int argc, char **argv) {
         return rc;
     }
 
+    hugepage_fd = open(hugepage_filename, O_RDWR, 0755);
+    if (hugepage_fd < 0) {
+        perror("open");
+        exit(1);
+    }
+
+    hugepage_addr = mmap(0, (uint64_t) 4096 * 1024 * 1024, PROT_READ | PROT_WRITE, MAP_SHARED, hugepage_fd, 0);
+    if (hugepage_addr==MAP_FAILED) {
+        perror("mmap");
+        unlink(hugepage_filename);
+        exit(1);
+    }
+
+    memset(hugepage_addr, 0, (uint64_t) 4096 * 1024 * 1024);
+
     request_string = create_get_tensorstore_matrix_json_string(&client, 0, 0, 0);
     printf("%s\n", request_string);
     send(client.sock, request_string, strlen(request_string), 0);
 
     buf = calloc(buf_size, sizeof(char));
-    response = calloc(33554432, sizeof(char));    
-    ptr = response;
+    // response = calloc(33554432, sizeof(char));    
+    // ptr = response;
 
 	gettimeofday(&g_start, NULL);
     // TODO: how to know the last receive is coming?
-    do {
-        memset(buf, 0, buf_size);
-        numBytesRecv = recv(client.sock, buf, buf_size, 0);
-        // printf("numBytesRecv %d\n", numBytesRecv);
-        if (numBytesRecv < 0) {
-            printf("error receive\n");
-            exit(1);
-        }
-        memcpy(ptr, buf, numBytesRecv);
-        ptr += numBytesRecv;
-    } while (numBytesRecv == buf_size || numBytesRecv == 2176);
+    numBytesRecv = recv(client.sock, buf, buf_size, 0);
+
+    // do {
+    //     memset(buf, 0, buf_size);
+    //     numBytesRecv = recv(client.sock, buf, buf_size, 0);
+    //     // printf("numBytesRecv %d\n", numBytesRecv);
+    //     if (numBytesRecv < 0) {
+    //         printf("error receive\n");
+    //         exit(1);
+    //     }
+    //     memcpy(ptr, buf, numBytesRecv);
+    //     ptr += numBytesRecv;
+    // } while (numBytesRecv == buf_size || numBytesRecv == 2176);
 
     gettimeofday(&g_end, NULL);
     g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
@@ -77,16 +98,17 @@ int main(int argc, char **argv) {
     // }
 
     // printf("response %s\n", response);
-    gettimeofday(&g_start, NULL);
-    data = parse_get_tensorstore_matrix_json(response, pid);
-    gettimeofday(&g_end, NULL);
-    g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
-    printf("parse response and read the memory map elapsed time: %f s\n", (double) g_duration / 1000000);
 
-    if (data == NULL) {
-        printf("parse incorrect\n");
-        exit(1);
-    }
+    // gettimeofday(&g_start, NULL);
+    // data = parse_get_tensorstore_matrix_json(response, pid);
+    // gettimeofday(&g_end, NULL);
+    // g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
+    // printf("parse response and read the memory map elapsed time: %f s\n", (double) g_duration / 1000000);
+
+    // if (data == NULL) {
+    //     printf("parse incorrect\n");
+    //     exit(1);
+    // }
 
     fd = open(argv[2], O_RDONLY);
     fstat(fd, &st);
@@ -95,7 +117,7 @@ int main(int argc, char **argv) {
 
     printf("compare data\n");
     for (i = 0; i < file_size; i++) {
-        if (data[i] != original_data[i]) {
+        if (hugepage_addr[i] != original_data[i]) {
             printf("data is wrong at byte %lu\n", i);
             rc = -1;
             break;
@@ -110,10 +132,13 @@ int main(int argc, char **argv) {
 
     free(request_string);
     free(buf);
-    free(response);
-    free(data);
+    // free(response);
+    // free(data);
 
     close(fd);
     munmap(original_data, file_size);
+
+    munmap(hugepage_addr, (uint64_t) 4096 * 1024 * 1024);
+    close(hugepage_fd);
     return rc;
 }
