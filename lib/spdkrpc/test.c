@@ -10,10 +10,11 @@ int main(int argc, char **argv) {
     // SPDK RPC part
     char *buf, *request_string, *original_data;
     int fd, rc;
-    uint64_t i, file_size, g_duration;
+    uint64_t i, j, k, checked_byte, offset, file_size, g_duration;
     struct stat st;
     struct timeval g_start, g_end;
-
+    int matrix_size, submatrix_size, x, y;
+    
     struct JSONRPCClient client = {
         .verbose = 0,
         .timeout = 60,
@@ -28,10 +29,15 @@ int main(int argc, char **argv) {
     int hugepage_fd;
     char *hugepage_addr;
 
-    if (argc < 2) {
-        printf("usage: %s <verify file path>\n", argv[0]);
+    if (argc < 6) {
+        printf("usage: %s <verify file path> <matrix size> <submatrix size> <x> <y>\n", argv[0]);
         exit(1);
     }
+
+    matrix_size = atoi(argv[2]);
+    submatrix_size = atoi(argv[3]);
+    x = atoi(argv[4]);
+    y = atoi(argv[5]);
 
     rc = spdk_rpc_connect(&client);
     if (rc) {
@@ -54,7 +60,7 @@ int main(int argc, char **argv) {
 
     memset(hugepage_addr, 0, HUGEPAGE_SZ);
 
-    request_string = create_get_tensorstore_matrix_json_string(&client, 1, 0, 0);
+    request_string = create_get_tensorstore_matrix_json_string(&client, 0, x, y);
     printf("%s\n", request_string);
     send(client.sock, request_string, strlen(request_string), 0);
 
@@ -66,7 +72,7 @@ int main(int argc, char **argv) {
     g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
     printf("receive response elapsed time: %f s\n", (double) g_duration / 1000000);
 
-    // printf("response:\n %s\n", buf);
+    printf("response:\n %s\n", buf);
 
     gettimeofday(&g_start, NULL);
     return_size = get_tensorstore_matrix_return_size(buf);
@@ -79,18 +85,31 @@ int main(int argc, char **argv) {
     //     exit(1);
     // }
 
+    // assume matrix is a square
     fd = open(argv[1], O_RDONLY);
     fstat(fd, &st);
 	file_size = st.st_size;
     original_data = (char *) mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
 
+    file_size = file_size / ((matrix_size / submatrix_size) * (matrix_size / submatrix_size));
+
+    checked_byte = 0;
+    offset = 0;
     if (file_size == return_size) {
         printf("compare data\n");
-        for (i = 0; i < return_size; i++) {
-            if (hugepage_addr[i] != original_data[i]) {
-                printf("data is wrong at byte %lu\n", i);
-                rc = -1;
-                break;
+        for (i = y * submatrix_size; i < (y+1) * submatrix_size; i++) {
+            for (j = x * submatrix_size; j < (x+1) * submatrix_size; j++) {
+                // how many bytes per element needs to be checked
+                for (k = 0; k < sizeof(double); k++) {
+                    offset = (i*matrix_size+j)*sizeof(double)+k;
+                    // printf("i=%lu, j=%lu, offset=%lu\n", i, j, offset);
+                    if (hugepage_addr[checked_byte] != original_data[offset]) {
+                        printf("data is wrong at byte %lu, data=%x, original_data=%x\n", checked_byte, hugepage_addr[checked_byte], original_data[offset]);
+                        rc = -1;
+                        abort();
+                    }
+                    checked_byte++;
+                }
             }
         }
     } else {
