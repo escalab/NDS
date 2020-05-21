@@ -13,7 +13,7 @@
 
 #define THREADS_PER_BLOCK 256
 #define WARMUP 1
-#define ITERATIONS 1
+#define ITERATIONS 10
 
 __global__ void d2f_kernel(const double *din, float *dout, size_t dsize) {
 	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
@@ -29,6 +29,27 @@ __global__ void f2h_kernel(const float *din, half *dout, size_t dsize) {
 	{
 		dout[idx] = din[idx];
 	}
+}
+
+int isfinite_arr(double *ptr, size_t n) {
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        if (!isfinite(ptr[i])) {
+            return 0; 
+        }
+    }
+    return 1;
+}
+
+int isfinite_arr(float *ptr, size_t n) {
+    size_t i;
+    for (i = 0; i < n; i++) {
+        if (!isfinite(ptr[i])) {
+            return 0; 
+        }
+    }
+    return 1;
 }
 
 void test_loop(size_t n, cublasOperation_t a_op, cublasOperation_t b_op, 
@@ -64,10 +85,10 @@ void test_loop(size_t n, cublasOperation_t a_op, cublasOperation_t b_op,
 
 int main(int argc, char** argv) {
     double *a, *b;
-    double *a_d, *b_d, *c_d;
-    float *a_f, *b_f, *c_f;
-    half *a_h, *b_h, *c_h;
-
+    double *a_d, *b_d, *c_d, *c_host_d;
+    float *a_f, *b_f, *c_f, *c_host_f;
+    half *a_h, *b_h;
+    float *c_h, *c_host_h;
     size_t n, dsize;
     int a_fd, b_fd;
     int i, j;
@@ -101,12 +122,19 @@ int main(int argc, char** argv) {
     printf("memory usage: input: %lu bytes, output: %lu bytes\n", sizeof(double) * n * n * 2, sizeof(double) * n * n);
     
     // double
+    c_host_d = (double *) malloc(sizeof(double) * n * n);
     printf("Running double precision...\n");
     for (i = 0; i < 2; i++) {
         for (j = 0; j < 2; j++) {
             test_loop(n, op_arr[i], op_arr[j], a_d, CUDA_R_64F, b_d, CUDA_R_64F, c_d, CUDA_R_64F, CUDA_R_64F);
+            cudaMemcpy(c_host_d, c_d, sizeof(double) * n * n, cudaMemcpyDeviceToHost);
+            if (!isfinite_arr(c_host_d, dsize)) {
+                printf("found non-finite result, abort\n");
+                exit(-1);
+            }
         }
     }
+    free(c_host_d);
 
     // float
     cudaFree(c_d);
@@ -119,11 +147,18 @@ int main(int argc, char** argv) {
     cudaMalloc((void **) &c_f, sizeof(float) * n * n);
 
     printf("Running float precision...\n");
+    c_host_f = (float *) malloc(sizeof(float) * n * n);
     for (i = 0; i < 2; i++) {
         for (j = 0; j < 2; j++) {
             test_loop(n, op_arr[i], op_arr[j], a_f, CUDA_R_32F, b_f, CUDA_R_32F, c_f, CUDA_R_32F, CUDA_R_32F);
+            cudaMemcpy(c_host_f, c_f, sizeof(float) * n * n, cudaMemcpyDeviceToHost);
+            if (!isfinite_arr(c_host_f, dsize)) {
+                printf("found non-finite result, abort\n");
+                exit(-1);
+            }
         }
     }
+    free(c_host_f);
 
     // half
     cudaFree(c_f);
@@ -136,11 +171,18 @@ int main(int argc, char** argv) {
     cudaMalloc((void **) &c_h, sizeof(float) * n * n);
 
     printf("Running half precision...\n");
+    c_host_h = (float *) malloc(sizeof(float) * n * n);
     for (i = 0; i < 2; i++) {
         for (j = 0; j < 2; j++) {
             test_loop(n, op_arr[i], op_arr[j], a_h, CUDA_R_16F, b_h, CUDA_R_16F, c_h, CUDA_R_32F, CUDA_R_32F);
+            cudaMemcpy(c_host_h, c_h, sizeof(float) * n * n, cudaMemcpyDeviceToHost);
+            if (!isfinite_arr(c_host_h, dsize)) {
+                printf("found non-finite result, abort\n");
+                exit(-1);
+            }
         }
     }
+    free(c_host_h);
     cudaFree(a_h);
     cudaFree(b_h);
     cudaFree(c_h);
