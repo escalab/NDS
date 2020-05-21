@@ -11,8 +11,25 @@
 
 #include <cublas_v2.h>
 
+#define THREADS_PER_BLOCK 256
 #define WARMUP 1
 #define ITERATIONS 1
+
+__global__ void d2f_kernel(const double *din, float *dout, size_t dsize) {
+	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
+	if (idx < dsize)
+	{
+		dout[idx] = din[idx];
+	}
+}
+
+__global__ void f2h_kernel(const float *din, half *dout, size_t dsize) {
+	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
+	if (idx < dsize)
+	{
+		dout[idx] = din[idx];
+	}
+}
 
 void test_loop(size_t n, cublasOperation_t a_op, cublasOperation_t b_op, 
     void *a, cudaDataType_t a_type, void *b, cudaDataType_t b_type,  
@@ -39,16 +56,19 @@ void test_loop(size_t n, cublasOperation_t a_op, cublasOperation_t b_op,
         cudaDeviceSynchronize();
         gettimeofday(&h_end, NULL);
         duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-        printf("%f ", (float) duration / 1000);
+        printf("%.3f ", (float) duration / 1000);
     }
     printf("\n");
     cublasDestroy(handle);
 }
 
 int main(int argc, char** argv) {
-    double *a_f, *b_f, *a_d, *b_d;
-    double *c_d;
-    long long n;
+    double *a, *b;
+    double *a_d, *b_d, *c_d;
+    float *a_f, *b_f, *c_f;
+    half *a_h, *b_h, *c_h;
+
+    size_t n, dsize;
     int a_fd, b_fd;
     int i, j;
     cublasOperation_t op_arr[] = {CUBLAS_OP_N, CUBLAS_OP_T};
@@ -62,20 +82,26 @@ int main(int argc, char** argv) {
     a_fd = open(argv[1], O_RDONLY);
     b_fd = open(argv[2], O_RDONLY);
     n = atoi(argv[3]);
+    dsize = n * n;
 
-    a_f = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
-    b_f = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
-
+    a = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
+    b = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
     cudaMalloc((void **) &a_d, sizeof(double) * n * n);
     cudaMalloc((void **) &b_d, sizeof(double) * n * n);
     cudaMalloc((void **) &c_d, sizeof(double) * n * n);
 
-    cudaMemcpy(a_d, a_f, sizeof(double) * n * n, cudaMemcpyHostToDevice);
-    cudaMemcpy(b_d, b_f, sizeof(double) * n * n, cudaMemcpyHostToDevice);
+    cudaMemcpy(a_d, a, sizeof(double) * n * n, cudaMemcpyHostToDevice);
+    cudaMemcpy(b_d, b, sizeof(double) * n * n, cudaMemcpyHostToDevice);
 
-    printf("memory usage: input: %llu bytes, output: %llu bytes\n", sizeof(double) * n * n * 2, sizeof(double) * n * n);
+    munmap(a, sizeof(double) * n * n);
+    munmap(b, sizeof(double) * n * n);
+    close(a_fd);
+    close(b_fd);
+
+    printf("memory usage: input: %lu bytes, output: %lu bytes\n", sizeof(double) * n * n * 2, sizeof(double) * n * n);
     
     // double
+    printf("Running double precision...\n");
     for (i = 0; i < 2; i++) {
         for (j = 0; j < 2; j++) {
             test_loop(n, op_arr[i], op_arr[j], a_d, CUDA_R_64F, b_d, CUDA_R_64F, c_d, CUDA_R_64F, CUDA_R_64F);
@@ -83,16 +109,41 @@ int main(int argc, char** argv) {
     }
 
     // float
+    cudaFree(c_d);
+    cudaMalloc((void **) &a_f, sizeof(float) * n * n);
+    d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_d, a_f, dsize);
+    cudaFree(a_d);
+    cudaMalloc((void **) &b_f, sizeof(float) * n * n);
+    d2f_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_d, b_f, dsize);
+    cudaFree(b_d);
+    cudaMalloc((void **) &c_f, sizeof(float) * n * n);
+
+    printf("Running float precision...\n");
+    for (i = 0; i < 2; i++) {
+        for (j = 0; j < 2; j++) {
+            test_loop(n, op_arr[i], op_arr[j], a_f, CUDA_R_32F, b_f, CUDA_R_32F, c_f, CUDA_R_32F, CUDA_R_32F);
+        }
+    }
 
     // half
+    cudaFree(c_f);
+    cudaMalloc((void **) &a_h, sizeof(half) * n * n);
+    f2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_f, a_h, dsize);
+    cudaFree(a_f);
+    cudaMalloc((void **) &b_h, sizeof(half) * n * n);
+    f2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_f, b_h, dsize);
+    cudaFree(b_f);
+    cudaMalloc((void **) &c_h, sizeof(float) * n * n);
 
+    printf("Running half precision...\n");
+    for (i = 0; i < 2; i++) {
+        for (j = 0; j < 2; j++) {
+            test_loop(n, op_arr[i], op_arr[j], a_h, CUDA_R_16F, b_h, CUDA_R_16F, c_h, CUDA_R_32F, CUDA_R_32F);
+        }
+    }
+    cudaFree(a_h);
+    cudaFree(b_h);
+    cudaFree(c_h);
 
-    cudaFree(a_d);
-    cudaFree(b_d);
-    cudaFree(c_d);
-    munmap(a_f, sizeof(double) * n * n);
-    munmap(b_f, sizeof(double) * n * n);
-    close(a_fd);
-    close(b_fd);
     return 0;
 }
