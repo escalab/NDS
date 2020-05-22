@@ -3,7 +3,7 @@ CFLAGS=-O3 -Wall
 
 TARGET = libtensorstore.so
 SRC=tensorstore.c
-
+TEST=test_transform test_transpose
 ifeq ($(debug),1)
 	CFLAGS += -g -DDEBUG
 endif
@@ -15,10 +15,17 @@ all: $(TARGET) test
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -fPIC --shared -o $@ $< 
 
-test: test.c $(SRC)
+# test_transform: test_transform.c $(SRC)
+# 	$(CC) $(CFLAGS) -c $^
+# 	$(CC) $(CFLAGS) -o $@ *.o
+# 	rm -f *.o
+
+test: $(TEST)
+
+%: %.c $(SRC)
 	$(CC) $(CFLAGS) -c $^
 	$(CC) $(CFLAGS) -o $@ *.o
 	rm -f *.o
 
 clean:
-	rm -f $(TARGET) test
+	rm -f $(TARGET) $(TEST)
