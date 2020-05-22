@@ -11,6 +11,27 @@ void extract_submatrix_from_seq(double *seq_matrix, double *sub_matrix, size_t n
     }
 }
 
+void tensor_matrix_transpose(double *tensor_matrix, size_t n_row, size_t n_col, size_t sub_m, size_t sub_n) {
+    size_t i, j;
+    double temp[sub_m*sub_n];
+    size_t cross_row = sub_m * n_col, cross_col = sub_m * sub_n;
+    double *upper_ptr, *lower_ptr;
+    // iterate submatrix at upper triangles
+    // for example 4 * 4 matrix: 0, 1, 2, 3 
+    for (i = 0; i < n_row / sub_m; i++) {
+        // (1, 2, 3), (2, 3), (3)
+        for (j = i+1; j < n_col / sub_n; j++) {
+            // 0, 1 -> 1
+            upper_ptr = tensor_matrix + i * cross_row + j * cross_col;
+            // 1, 0 -> 4
+            lower_ptr = tensor_matrix + j * cross_row + i * cross_col; 
+            memcpy(&temp, upper_ptr, sizeof(double) * sub_m * sub_n);
+            memcpy(upper_ptr, lower_ptr, sizeof(double) * sub_m * sub_n);
+            memcpy(lower_ptr, &temp, sizeof(double) * sub_m * sub_n);
+        }
+    }
+}
+
 void seq_matrix_transpose(double *seq_matrix, size_t n_row, size_t n_col, size_t sub_m, size_t sub_n) {
     size_t i, j, ii;
     double temp[sub_n];
