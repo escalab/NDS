@@ -6,6 +6,19 @@
 #define HUGEPAGE_SZ 4 * 1024UL * 1024UL * 1024UL
 #define SOCK_BUF_SZ 4096
 
+void construct_spdkrpc_client(struct JSONRPCClient *client) {
+    client->verbose = 0;
+    client->timeout = 60;
+    client->request_id = 0;
+    client->addr = "/var/tmp/spdk.sock";
+    client->port = 5260;
+}
+
+int connect_to_spdkrpc_server(struct JSONRPCClient *client) {
+    construct_spdkrpc_client(client);
+    return spdk_rpc_connect(client);
+}
+
 int main(int argc, char **argv) {
     // SPDK RPC part
     char *buf, *request_string, *original_data;
@@ -15,14 +28,7 @@ int main(int argc, char **argv) {
     struct timeval g_start, g_end;
     int matrix_size, submatrix_size, x, y;
     
-    struct JSONRPCClient client = {
-        .verbose = 0,
-        .timeout = 60,
-        .request_id = 0,
-        .addr = "/var/tmp/spdk.sock",
-        .port = 5260
-    };
-
+    struct JSONRPCClient client;
     size_t return_size; 
 
     const char *hugepage_filename = "/dev/hugepages/tensorstore";
@@ -39,7 +45,7 @@ int main(int argc, char **argv) {
     x = atoi(argv[4]);
     y = atoi(argv[5]);
 
-    rc = spdk_rpc_connect(&client);
+    rc = connect_to_spdkrpc_server(&client);
     if (rc) {
         printf("cannot create conntection to SPDK RPC server");
         return rc;
