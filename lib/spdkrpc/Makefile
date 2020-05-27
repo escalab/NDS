@@ -2,8 +2,8 @@ CC=gcc
 CFLAGS=-O3 -Wall 
 LDFLAGS=-L/usr/local/lib -lcjson
 
-TARGET=spdkrpc.so
-SRC=sock.c mmap_reader.c json_parser.c api.c
+TARGET=libspdkrpc.so
+SRC=sock.c json_parser.c api.c
 
 ifeq ($(debug),1)
 	CFLAGS += -g -DDEBUG

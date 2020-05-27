@@ -33,15 +33,11 @@ struct JSONRPCClient {
     int port;
 };
 
-// mmap_reader.c
-char* read_from_spdk(int pid, unsigned long file_size, int parts, unsigned long *addr_list, char *buf); 
-
 // sock.c
 int spdk_rpc_connect(struct JSONRPCClient *client);
 
 // json_parser.c
 char *create_get_tensorstore_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y);
-char *parse_get_tensorstore_matrix_json(const char* respond_string, int pid);
 size_t get_tensorstore_matrix_return_size(const char* respond_string);
 
 // api.c
