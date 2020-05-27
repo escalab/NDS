@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
 
     size_t return_size; 
 
-    char *hugepage_filename = "/dev/hugepages/tensorstore";
+    const char *hugepage_filename = "/dev/hugepages/tensorstore";
     int hugepage_fd;
     char *hugepage_addr;
 
