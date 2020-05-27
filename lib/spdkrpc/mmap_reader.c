@@ -1,11 +1,5 @@
 #include "spdkrpc.h"
 
-#ifdef DEBUG
-#define DEBUG_PRINT(fmt, args...)    fprintf(stderr, fmt, ## args)
-#else
-#define DEBUG_PRINT(fmt, args...)    /* Don't do anything in release builds */
-#endif
-
 struct MmapReader {
     uint64_t _BASE_ADDR;
     uint32_t _BLOCK_SIZE;

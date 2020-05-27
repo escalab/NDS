@@ -15,6 +15,8 @@
 
 #define MAX_POLL_CQ_TIMEOUT 5000
 #define BLOCK_SIZE 16384
+#define HUGEPAGE_SZ 4 * 1024UL * 1024UL * 1024UL
+#define SOCK_BUF_SZ 4096
 
 #ifdef DEBUG
 #define DEBUG_PRINT(fmt, args...)    fprintf(stderr, fmt, ## args)
@@ -41,3 +43,8 @@ int spdk_rpc_connect(struct JSONRPCClient *client);
 char *create_get_tensorstore_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y);
 char *parse_get_tensorstore_matrix_json(const char* respond_string, int pid);
 size_t get_tensorstore_matrix_return_size(const char* respond_string);
+
+// api.c
+int connect_to_spdkrpc_server(struct JSONRPCClient *client);
+void *mmap_to_tensorstore_hugepage(void);
+size_t tensorstore_request_submatrix(struct JSONRPCClient *client, int id, int x, int y);
