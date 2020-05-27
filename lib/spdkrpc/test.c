@@ -42,13 +42,45 @@ char *mmap_to_tensorstore_hugepage(void) {
     return hugepage_addr;
 }
 
+size_t tensorstore_request_submatrix(struct JSONRPCClient *client, int id, int x, int y) {
+    char *buf, *request_string;
+    struct timeval g_start, g_end;
+    uint64_t g_duration;
+    size_t return_size; 
+
+    request_string = create_get_tensorstore_matrix_json_string(client, id, x, y);
+    printf("%s\n", request_string);
+    send(client->sock, request_string, strlen(request_string), 0);
+
+    buf = calloc(SOCK_BUF_SZ, sizeof(char));
+
+	gettimeofday(&g_start, NULL);
+    recv(client->sock, buf, SOCK_BUF_SZ, 0);
+    gettimeofday(&g_end, NULL);
+    g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
+    printf("receive response elapsed time: %f s\n", (double) g_duration / 1000000);
+
+    printf("response:\n %s\n", buf);
+
+    gettimeofday(&g_start, NULL);
+    return_size = get_tensorstore_matrix_return_size(buf);
+    gettimeofday(&g_end, NULL);
+    g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
+    printf("parse response JSON elapsed time: %f s\n", (double) g_duration / 1000000);
+    
+    free(request_string);
+    free(buf);
+
+    return return_size;
+}
+
+
 int main(int argc, char **argv) {
     // SPDK RPC part
-    char *buf, *request_string, *original_data;
+    char *original_data;
     int fd, rc;
-    uint64_t i, j, k, checked_byte, offset, file_size, g_duration;
+    uint64_t i, j, k, checked_byte, offset, file_size;
     struct stat st;
-    struct timeval g_start, g_end;
     int matrix_size, submatrix_size, x, y;
     
     char *hugepage_addr;
@@ -56,7 +88,7 @@ int main(int argc, char **argv) {
     size_t return_size; 
 
     if (argc < 6) {
-        printf("usage: %s <verify file path> <matrix size> <submatrix size> <x> <y>\n", argv[0]);
+        printf("usage: %s <verify file path> <matrix size> <submatrix size> <id> <x> <y>\n", argv[0]);
         exit(1);
     }
 
@@ -71,33 +103,14 @@ int main(int argc, char **argv) {
         return rc;
     }
 
-
     hugepage_addr = mmap_to_tensorstore_hugepage();
-
-    request_string = create_get_tensorstore_matrix_json_string(&client, 0, x, y);
-    printf("%s\n", request_string);
-    send(client.sock, request_string, strlen(request_string), 0);
-
-    buf = calloc(SOCK_BUF_SZ, sizeof(char));
-
-	gettimeofday(&g_start, NULL);
-    recv(client.sock, buf, SOCK_BUF_SZ, 0);
-    gettimeofday(&g_end, NULL);
-    g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
-    printf("receive response elapsed time: %f s\n", (double) g_duration / 1000000);
-
-    printf("response:\n %s\n", buf);
-
-    gettimeofday(&g_start, NULL);
-    return_size = get_tensorstore_matrix_return_size(buf);
-    gettimeofday(&g_end, NULL);
-    g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
-    printf("parse response JSON elapsed time: %f s\n", (double) g_duration / 1000000);
 
     // if (data == NULL) {
     //     printf("parse incorrect\n");
     //     exit(1);
     // }
+
+    return_size = tensorstore_request_submatrix(&client, 0, x, y);
 
     // assume matrix is a square
     fd = open(argv[1], O_RDONLY);
@@ -137,13 +150,10 @@ int main(int argc, char **argv) {
         printf("Test Passed\n");
     }
 
-    free(request_string);
-    free(buf);
     // free(response);
     // free(data);
 
     munmap(original_data, file_size);
-
     munmap(hugepage_addr, HUGEPAGE_SZ);
     close(fd);
     return rc;
