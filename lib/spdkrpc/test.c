@@ -19,6 +19,29 @@ int connect_to_spdkrpc_server(struct JSONRPCClient *client) {
     return spdk_rpc_connect(client);
 }
 
+char *mmap_to_tensorstore_hugepage(void) {
+    const char *hugepage_filename = "/dev/hugepages/tensorstore";
+    int hugepage_fd;
+    char *hugepage_addr;
+    
+    hugepage_fd = open(hugepage_filename, O_RDWR, 0755);
+    if (hugepage_fd < 0) {
+        perror("open");
+        exit(1);
+    }
+
+    hugepage_addr = mmap(0, HUGEPAGE_SZ, PROT_READ | PROT_WRITE, MAP_SHARED, hugepage_fd, 0);
+    if (hugepage_addr == MAP_FAILED) {
+        perror("mmap");
+        unlink(hugepage_filename);
+        exit(1);
+    }
+    close(hugepage_fd);
+
+    memset(hugepage_addr, 0, HUGEPAGE_SZ);
+    return hugepage_addr;
+}
+
 int main(int argc, char **argv) {
     // SPDK RPC part
     char *buf, *request_string, *original_data;
@@ -28,12 +51,9 @@ int main(int argc, char **argv) {
     struct timeval g_start, g_end;
     int matrix_size, submatrix_size, x, y;
     
+    char *hugepage_addr;
     struct JSONRPCClient client;
     size_t return_size; 
-
-    const char *hugepage_filename = "/dev/hugepages/tensorstore";
-    int hugepage_fd;
-    char *hugepage_addr;
 
     if (argc < 6) {
         printf("usage: %s <verify file path> <matrix size> <submatrix size> <x> <y>\n", argv[0]);
@@ -51,20 +71,8 @@ int main(int argc, char **argv) {
         return rc;
     }
 
-    hugepage_fd = open(hugepage_filename, O_RDWR, 0755);
-    if (hugepage_fd < 0) {
-        perror("open");
-        exit(1);
-    }
 
-    hugepage_addr = mmap(0, HUGEPAGE_SZ, PROT_READ | PROT_WRITE, MAP_SHARED, hugepage_fd, 0);
-    if (hugepage_addr == MAP_FAILED) {
-        perror("mmap");
-        unlink(hugepage_filename);
-        exit(1);
-    }
-
-    memset(hugepage_addr, 0, HUGEPAGE_SZ);
+    hugepage_addr = mmap_to_tensorstore_hugepage();
 
     request_string = create_get_tensorstore_matrix_json_string(&client, 0, x, y);
     printf("%s\n", request_string);
@@ -134,10 +142,9 @@ int main(int argc, char **argv) {
     // free(response);
     // free(data);
 
-    close(fd);
     munmap(original_data, file_size);
 
     munmap(hugepage_addr, HUGEPAGE_SZ);
-    close(hugepage_fd);
+    close(fd);
     return rc;
 }
