@@ -50,14 +50,16 @@ int verify(const double *matrix, const double *answer, size_t m) {
 }
 
 
-int transpose_matrix_from_spdk(size_t m, size_t sub_m, double *out_matrix) {
+int transpose_matrix_from_spdk(int id, size_t m, size_t sub_m, double *out_matrix) {
     size_t i, j, ii;
     double *hugepage_addr;
     double *out_ptr;
-
     struct JSONRPCClient client;
     size_t return_size; 
     int rc;
+
+    struct timeval h_start, h_end;
+    unsigned long long fetch_time = 0, transpose_time = 0;
     rc = connect_to_spdkrpc_server(&client);
     if (rc) {
         printf("cannot create conntection to SPDK RPC server");
@@ -67,23 +69,33 @@ int transpose_matrix_from_spdk(size_t m, size_t sub_m, double *out_matrix) {
     hugepage_addr = mmap_to_tensorstore_hugepage();
     for (i = 0; i < m / sub_m; i++) {
         for (j = 0; j < m / sub_m; j++) {
-            memset(hugepage_addr, 0, HUGEPAGE_SZ);
-            return_size = tensorstore_request_submatrix(&client, 0, j, i);
+            // memset(hugepage_addr, 0, HUGEPAGE_SZ);
+            gettimeofday(&h_start, NULL);
+            return_size = tensorstore_request_submatrix(&client, id, j, i);
+            gettimeofday(&h_end, NULL);
+            fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+
             if (return_size == 0) {
                 return -1;
             }
             out_ptr = out_matrix + j * sub_m * m + i * sub_m; 
             // iterate rows in the submatrix
+            gettimeofday(&h_start, NULL);
             for (ii = 0; ii < sub_m; ii++) {
                 memcpy(out_ptr + ii * m, hugepage_addr + ii * sub_m, sizeof(double) * sub_m);
             }
+            gettimeofday(&h_end, NULL);
+            transpose_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
         }   
     }
     munmap(hugepage_addr, HUGEPAGE_SZ);
+    printf("data fetch time: %f ms\n", (float) fetch_time / 1000);
+    printf("transpose time: %f ms\n", (float) transpose_time / 1000);
     return 0;
  }
 
 int main(int argc, char** argv) {
+    int id;
     size_t m, sub_m;
     double *valid_matrix, *seq_matrix;
     int seq_fd;
@@ -91,13 +103,14 @@ int main(int argc, char** argv) {
     struct timeval h_start, h_end;
     unsigned long long duration;
 
-    if (argc < 4) {
-        printf("usage: %s <matrix size> <submatrix size> <matrix_path>\n", argv[0]);
+    if (argc < 5) {
+        printf("usage: %s <id> <matrix size> <submatrix size> <matrix_path>\n", argv[0]);
         exit(1);
     }
 
-    m = atoi(argv[1]);
-    sub_m = atoi(argv[2]);
+    id = atoi(argv[1]);
+    m = atoi(argv[2]);
+    sub_m = atoi(argv[3]);
 
     if (m < sub_m) {
         printf("matrix size has to be larger than submatrix size\n");
@@ -111,12 +124,12 @@ int main(int argc, char** argv) {
     seq_matrix = (double *) malloc(sizeof(double) * m * m);
 
     gettimeofday(&h_start, NULL);
-    transpose_matrix_from_spdk(m, sub_m, seq_matrix);
+    transpose_matrix_from_spdk(id, m, sub_m, seq_matrix);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
     printf("seq_matrix transpose time: %f ms\n", (float) duration / 1000);
 
-    seq_fd = open(argv[3], O_RDONLY, 0644);
+    seq_fd = open(argv[4], O_RDONLY, 0644);
     seq_file = (double *) mmap(NULL, sizeof(double) * m * m, PROT_READ, MAP_PRIVATE, seq_fd, 0);
     close(seq_fd);
 
