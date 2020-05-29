@@ -48,3 +48,8 @@ valid_matrix transpose time: 1086822.625000 ms
 TEST PASSED
 
 ./test_transpose_spdk 7 32768 64 ../../data/output_double_32768.bin
+data fetch time: 7890305.000000 ms
+transpose time: 2597.708008 ms
+seq_matrix transpose time: 7893048.500000 ms
+valid_matrix transpose time: 2338180.250000 ms
+TEST PASSED
