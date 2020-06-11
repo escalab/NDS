@@ -1,0 +1,45 @@
+./test_transpose 32768 16384
+seq_matrix transpose time: 333.140991 ms
+tensor_matrix transpose time: 1002.276001 ms
+./test_transpose 32768 8192
+seq_matrix transpose time: 460.286011 ms
+tensor_matrix transpose time: 818.614014 ms
+./test_transpose 32768 4096
+seq_matrix transpose time: 555.103027 ms
+tensor_matrix transpose time: 869.856995 ms
+./test_transpose 32768 2048
+seq_matrix transpose time: 608.601013 ms
+tensor_matrix transpose time: 931.831970 ms
+./test_transpose 32768 1024
+seq_matrix transpose time: 654.284973 ms
+tensor_matrix transpose time: 1074.119995 ms
+./test_transpose 32768 512
+seq_matrix transpose time: 750.112000 ms
+tensor_matrix transpose time: 806.091003 ms
+./test_transpose 32768 256
+seq_matrix transpose time: 955.111023 ms
+tensor_matrix transpose time: 698.437012 ms
+./test_transpose 32768 128
+seq_matrix transpose time: 1176.000977 ms
+tensor_matrix transpose time: 673.567993 ms
+./test_transpose 32768 64
+seq_matrix transpose time: 1522.026978 ms
+tensor_matrix transpose time: 694.505981 ms
+./test_transpose 32768 32
+seq_matrix transpose time: 1726.498047 ms
+tensor_matrix transpose time: 782.101990 ms
+./test_transpose 32768 16
+seq_matrix transpose time: 2898.486084 ms
+tensor_matrix transpose time: 967.088989 ms
+./test_transpose 32768 8
+seq_matrix transpose time: 3732.392090 ms
+tensor_matrix transpose time: 1351.041016 ms
+./test_transpose 32768 4
+seq_matrix transpose time: 5831.678223 ms
+tensor_matrix transpose time: 2642.049072 ms
+./test_transpose 32768 2
+seq_matrix transpose time: 10301.616211 ms
+tensor_matrix transpose time: 5783.070801 ms
+./test_transpose 32768 1
+seq_matrix transpose time: 16811.480469 ms
+tensor_matrix transpose time: 16550.917969 ms

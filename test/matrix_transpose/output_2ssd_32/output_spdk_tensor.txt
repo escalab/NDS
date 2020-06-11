@@ -1,0 +1,56 @@
+./test_transpose_spdk 0 32768 8192 ../../data/output_double_32768.bin
+data fetch time: 2028.286987 ms
+transpose time: 2170.347900 ms
+seq_matrix transpose time: 4327.419922 ms
+valid_matrix transpose time: 61160.894531 ms
+TEST PASSED
+
+./test_transpose_spdk 1 32768 4096 ../../data/output_double_32768.bin
+data fetch time: 2592.327881 ms
+transpose time: 2192.937988 ms
+seq_matrix transpose time: 4914.923828 ms
+valid_matrix transpose time: 63723.437500 ms
+TEST PASSED
+
+./test_transpose_spdk 2 32768 2048 ../../data/output_double_32768.bin
+data fetch time: 5469.203125 ms
+transpose time: 2228.197998 ms
+seq_matrix transpose time: 7826.535156 ms
+valid_matrix transpose time: 67131.476562 ms
+TEST PASSED
+
+./test_transpose_spdk 3 32768 1024 ../../data/output_double_32768.bin
+data fetch time: 16265.152344 ms
+transpose time: 2281.579102 ms
+seq_matrix transpose time: 18675.947266 ms
+valid_matrix transpose time: 66921.671875 ms
+TEST PASSED
+
+./test_transpose_spdk 4 32768 512 ../../data/output_double_32768.bin
+data fetch time: 70234.921875 ms
+transpose time: 2390.866943 ms
+seq_matrix transpose time: 72755.148438 ms
+valid_matrix transpose time: 68594.960938 ms
+TEST PASSED
+
+./test_transpose_spdk 5 32768 256 ../../data/output_double_32768.bin
+data fetch time: 258287.781250 ms
+transpose time: 2444.843018 ms
+seq_matrix transpose time: 260862.640625 ms
+valid_matrix transpose time: 66253.328125 ms
+TEST PASSED
+
+./test_transpose_spdk 6 32768 128 ../../data/output_double_32768.bin
+data fetch time: 1000708.812500 ms
+transpose time: 2263.593994 ms
+seq_matrix transpose time: 1003106.625000 ms
+valid_matrix transpose time: 70792.750000 ms
+TEST PASSED
+
+./test_transpose_spdk 7 32768 64 ../../data/output_double_32768.bin
+data fetch time: 3991686.500000 ms
+transpose time: 2538.509033 ms
+seq_matrix transpose time: 3994369.250000 ms
+valid_matrix transpose time: 67678.382812 ms
+TEST PASSED
+
