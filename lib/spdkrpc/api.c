@@ -43,7 +43,7 @@ size_t tensorstore_request_submatrix(struct JSONRPCClient *client, int id, int x
     size_t return_size; 
 
     request_string = create_get_tensorstore_matrix_json_string(client, id, x, y);
-    printf("%s\n", request_string);
+    // printf("%s\n", request_string);
     send(client->sock, request_string, strlen(request_string), 0);
 
     buf = calloc(SOCK_BUF_SZ, sizeof(char));
@@ -52,15 +52,15 @@ size_t tensorstore_request_submatrix(struct JSONRPCClient *client, int id, int x
     recv(client->sock, buf, SOCK_BUF_SZ, 0);
     gettimeofday(&g_end, NULL);
     g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
-    printf("receive response elapsed time: %f s\n", (double) g_duration / 1000000);
+    // printf("receive response elapsed time: %f s\n", (double) g_duration / 1000000);
 
-    printf("response:\n %s\n", buf);
+    // printf("response:\n %s\n", buf);
 
     gettimeofday(&g_start, NULL);
     return_size = get_tensorstore_matrix_return_size(buf);
     gettimeofday(&g_end, NULL);
     g_duration = ((g_end.tv_sec * 1000000 + g_end.tv_usec) - (g_start.tv_sec * 1000000 + g_start.tv_usec));
-    printf("parse response JSON elapsed time: %f s\n", (double) g_duration / 1000000);
+    // printf("parse response JSON elapsed time: %f s\n", (double) g_duration / 1000000);
     
     free(request_string);
     free(buf);
