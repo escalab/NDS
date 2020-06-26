@@ -37,10 +37,12 @@ struct JSONRPCClient {
 int spdk_rpc_connect(struct JSONRPCClient *client);
 
 // json_parser.c
-char *create_get_tensorstore_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y);
-size_t get_tensorstore_matrix_return_size(const char* respond_string);
+char *create_tensorstore_get_gather_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y, int sub_m);
+char *create_tensorstore_get_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y);
+size_t tensorstore_get_matrix_return_size(const char* respond_string);
 
 // api.c
 int connect_to_spdkrpc_server(struct JSONRPCClient *client);
 void *mmap_to_tensorstore_hugepage(void);
-size_t tensorstore_request_submatrix(struct JSONRPCClient *client, int id, int x, int y);
+size_t tensorstore_get_submatrix(struct JSONRPCClient *client, int id, int x, int y);
+size_t tensorstore_get_gather_submatrix(struct JSONRPCClient *client, int id, int x, int y, int sub_m);

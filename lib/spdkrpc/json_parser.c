@@ -31,6 +31,18 @@ cJSON *create_get_tensorstore_matrix_param(int id, int x, int y) {
     return param;
 }
 
+cJSON *create_get_tensorstore_gather_matrix_param(int id, int x, int y, int sub_m) {
+    cJSON *param = create_get_tensorstore_matrix_param();
+    cJSON *sub_m_json = NULL;
+    
+    sub_m_json = cJSON_CreateNumber(sub_m);
+    if (sub_m_json == NULL) {
+        return param;
+    }
+    cJSON_AddItemToObject(param, "sub_m", sub_m_json);
+    return param;
+}
+
 cJSON *create_rpc_json_object(struct JSONRPCClient *client, char *method_string, cJSON *params) {
     cJSON *request_json = cJSON_CreateObject();
     cJSON *jsonrpc;
@@ -64,7 +76,18 @@ cJSON *create_rpc_json_object(struct JSONRPCClient *client, char *method_string,
     return request_json;
 }
 
-char *create_get_tensorstore_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y) {
+char *create_tensorstore_get_gather_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y, int sub_m) {
+    cJSON *params = create_get_tensorstore_gather_matrix_param(id, x, y, sub_m);
+
+    cJSON *request = create_rpc_json_object(client, "get_tensorstore_gather_matrix", params);
+    char *request_string = cJSON_PrintUnformatted(request);
+    
+    cJSON_Delete(request);
+
+    return request_string;
+}
+
+char *create_tensorstore_get_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y) {
     cJSON *params = create_get_tensorstore_matrix_param(id, x, y);
     cJSON *request = create_rpc_json_object(client, "get_tensorstore_matrix", params);
     char *request_string = cJSON_PrintUnformatted(request);
@@ -74,7 +97,7 @@ char *create_get_tensorstore_matrix_json_string(struct JSONRPCClient* client, in
     return request_string;
 }
 
-size_t get_tensorstore_matrix_return_size(const char* respond_string) {
+size_t tensorstore_get_matrix_return_size(const char* respond_string) {
     cJSON *object_json = NULL;
     const cJSON *result = NULL;
     const cJSON *success = NULL;
