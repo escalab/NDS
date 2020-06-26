@@ -33,8 +33,11 @@ int main(int argc, char **argv) {
 
     hugepage_addr = mmap_to_tensorstore_hugepage();
 
+#ifdef GATHER
+    return_size = tensorstore_get_gather_submatrix(&client, 0, x, y, submatrix_size);
+#else
     return_size = tensorstore_get_submatrix(&client, 0, x, y);
-
+#endif
     // assume matrix is a square
     fd = open(argv[1], O_RDONLY);
     fstat(fd, &st);
