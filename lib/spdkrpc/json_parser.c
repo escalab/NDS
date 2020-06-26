@@ -32,7 +32,7 @@ cJSON *create_get_tensorstore_matrix_param(int id, int x, int y) {
 }
 
 cJSON *create_get_tensorstore_gather_matrix_param(int id, int x, int y, int sub_m) {
-    cJSON *param = create_get_tensorstore_matrix_param();
+    cJSON *param = create_get_tensorstore_matrix_param(id, x, y);
     cJSON *sub_m_json = NULL;
     
     sub_m_json = cJSON_CreateNumber(sub_m);

@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
 
     hugepage_addr = mmap_to_tensorstore_hugepage();
 
-    return_size = tensorstore_request_submatrix(&client, 0, x, y);
+    return_size = tensorstore_get_submatrix(&client, 0, x, y);
 
     // assume matrix is a square
     fd = open(argv[1], O_RDONLY);

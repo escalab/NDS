@@ -71,7 +71,7 @@ int transpose_matrix_from_spdk(int id, size_t m, size_t sub_m, double *out_matri
         for (j = 0; j < m / sub_m; j++) {
             // memset(hugepage_addr, 0, HUGEPAGE_SZ);
             gettimeofday(&h_start, NULL);
-            return_size = tensorstore_request_submatrix(&client, id, j, i);
+            return_size = tensorstore_get_submatrix(&client, id, j, i);
             gettimeofday(&h_end, NULL);
             fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
 
