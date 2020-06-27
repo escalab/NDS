@@ -3,7 +3,7 @@ CFLAGS=-O3 -Wall
 LDFLAG=-L../../lib/tensorstore/ -I../../lib/tensorstore/ -ltensorstore
 LDFLAG+=-L../../lib/spdkrpc/ -I../../lib/spdkrpc/ -lspdkrpc
 
-TARGET=test_transpose test_transpose_spdk
+TARGET=test_transpose
 
 ifeq ($(debug),1)
 	CFLAGS += -g -DDEBUG
