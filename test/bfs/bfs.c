@@ -8,49 +8,76 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-void bfs(uint64_t *graph, int source, int num_nodes) {
-    uint64_t i, j;
-    int next_round = 1, count = 0;
-    int *visited, *curr, *next;
-    uint64_t *node;
-    visited = calloc(num_nodes, sizeof(int));
-    curr = calloc(num_nodes, sizeof(int));
-    next = calloc(num_nodes, sizeof(int));
-    curr[source] = 1;
-    printf("starting iteration\n");
-    while (next_round) {
-        next_round = 0;
-        // iterate current nodes in the array
-        for (i = 0; i < num_nodes; i++) {
-            // if the node hasn't been visited yet.
-            if (curr[i] && !visited[i]) {
-                node = graph + (i * num_nodes);
+void kernel2(int* g_graph_mask, int *g_updating_graph_mask, int* g_graph_visited, int *g_over, int no_of_nodes) {
+    uint64_t id;
+    for (id = 0; id < no_of_nodes; id++) {
+        if (g_updating_graph_mask[id]) {
+            g_graph_mask[id] = 1;
+            g_graph_visited[id] = 1;
+            *g_over = 1;
+            g_updating_graph_mask[id] = 0;
+        }
+    }
+}
 
-                // add the neighbors of the current node to the next array.
-                for (j = 0; j < num_nodes; j++) {
-                    if (node[j]) {
-                        next[j] = 1;
-                        // indicate we will have next iteration.
-                        next_round = 1;
-                    }
+void kernel1(uint64_t *graph, int* g_graph_mask, int* g_updating_graph_mask, int *g_graph_visited, int* g_cost, int no_of_nodes) {
+    uint64_t id, neighbor_id, offset;
+    uint64_t *node;
+    for (id = 0; id < no_of_nodes; id++) {
+        if (g_graph_mask[id]) {
+            g_graph_mask[id] = 0;
+            offset = id * no_of_nodes;
+            node = graph + offset;
+            for (neighbor_id = 0; neighbor_id < no_of_nodes; neighbor_id++) {
+                if (node[neighbor_id] && !g_graph_visited[neighbor_id]) {
+                    g_cost[neighbor_id] = g_cost[id] + 1;
+                    g_updating_graph_mask[neighbor_id] = 1;
                 }
-                // finished visit, mark the node.
-                visited[i] = 1;
             }
         }
-        memcpy(curr, next, num_nodes * sizeof(int));
-        memset(next, 0, num_nodes * sizeof(int));
-        count++;
-        printf("iteration %d\n", count);
     }
-    count = 0;
+}
+
+void bfs(uint64_t *graph, int source, int num_nodes) {
+    uint64_t i, j;
+    int over = 1, count = 0;
+    int *visited, *mask, *updating_mask, *cost;
+    uint64_t *node;
+    FILE *fpo;
+    visited = calloc(num_nodes, sizeof(int));
+    mask = calloc(num_nodes, sizeof(int));
+    updating_mask = calloc(num_nodes, sizeof(int));
+    cost = calloc(num_nodes, sizeof(int));
+
     for (i = 0; i < num_nodes; i++) {
-        if (visited[i]) {
-            count++;
-        }
+        cost[i] = -1;
     }
 
-    printf("num of visited nodes: %d\n", count);
+    mask[source] = 1;
+    visited[source] = 1;
+    cost[source] = 0;
+
+    printf("starting iteration\n");
+    do {
+        over = 0;
+        kernel1(graph, mask, updating_mask, visited, cost, num_nodes);
+        kernel2(mask, updating_mask, visited, &over, num_nodes);
+        count++;
+        printf("iteration %d\n", count);
+    } while (over);
+
+    //Store the result into a file
+	fpo = fopen("result.txt","w");
+	for (i = 0; i < num_nodes; i++) {
+		fprintf(fpo, "%d) cost:%d\n", i, cost[i]);
+    }
+	fclose(fpo);
+	printf("Result stored in result.txt\n");
+
+    free(visited);
+    free(mask);
+    free(updating_mask);
+    free(cost);
 }
 
 int main(int argc, char **argv) {
