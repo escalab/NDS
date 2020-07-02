@@ -15,7 +15,7 @@ default: all
 all: $(TARGET)
 
 $(TARGET): $(SRC) 
-	$(NVCC) -o $@ $^ $(LD_FLAGS) 
+	$(NVCC) -o $@ $^ $(LD_FLAGS) -DGATHER
 
 clean:
 	rm -rf $(TARGET)

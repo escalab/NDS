@@ -55,16 +55,23 @@ int verify(const float *C, const float *answer, int m, int n) {
     return 1;
 }
 
+
+#ifdef GATHER
+int cudaMemcpyFromMmap(struct JSONRPCClient *client, double *dst, const double *src, int id, int x, int y, int sub_m) {
+    size_t return_size; 
+    return_size = tensorstore_get_gather_submatrix(client, id, x, y, sub_m);
+#else
 int cudaMemcpyFromMmap(struct JSONRPCClient *client, double *dst, const double *src, int id, int x, int y) {
     size_t return_size; 
-
-    return_size = tensorstore_request_submatrix(client, id, x, y);
+    return_size = tensorstore_get_submatrix(client, id, x, y);
+#endif
     if (return_size == 0) {
         return -1;
     }
     cudaMemcpy(dst, src, return_size, cudaMemcpyHostToDevice);
     return 0;
 }
+
 
 int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
     int i, j, k;
@@ -112,12 +119,18 @@ int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
     // blockGEMM
     for (i = 0; i < m / sub_m; i++) {
         for (j = 0; j < m / sub_m; j++) {
+            cudaMemset(c_sub_f, 0, sub_m * sub_m * sizeof(float));
             for (k = 0; k < m / sub_m; k++) {
-                // printf("i: %d, j: %d, k: %d\n", i, j, k);
+                printf("i: %d, j: %d, k: %d\n", i, j, k);
                 // memset(hugepage_addr, 0, HUGEPAGE_SZ);
                 gettimeofday(&h_start, NULL);
+#ifdef GATHER
+                cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i, sub_m);
+                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k, sub_m);
+#else
                 cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i);
                 cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k);
+#endif
                 gettimeofday(&h_end, NULL);
                 fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
                 d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize);
@@ -125,14 +138,15 @@ int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
                 // gemm
                 gettimeofday(&h_start, NULL);
                 cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, ldc, a_sub_h, CUDA_R_16F, ldc, &beta, c_sub_f, CUDA_R_32F, ldc, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                cudaDeviceSynchronize();
                 gettimeofday(&h_end, NULL);
                 gemm_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
             }
-        }   
-        cudaMemcpy2D((c + (i * sub_m) * m + (j * sub_m)), m * sizeof(float), c_sub_f, out_pitch, sizeof(float) * sub_m, sub_m, cudaMemcpyDeviceToHost);
+            cudaMemcpy2D((c + (i * sub_m) * m + (j * sub_m)), m * sizeof(float), c_sub_f, out_pitch, sizeof(float) * sub_m, sub_m, cudaMemcpyDeviceToHost);
+        }
     }
     printf("data fetch time: %f ms\n", (float) fetch_time / 1000);
-    printf("transpose time: %f ms\n", (float) gemm_time / 1000);
+    printf("GEMM time: %f ms\n", (float) gemm_time / 1000);
 
     munmap(hugepage_addr, HUGEPAGE_SZ);
     cublasDestroy(handle);
@@ -189,7 +203,12 @@ int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
     for (k = 0; k < m / sub_m; k++) {
         for (i = 0; i < m / sub_m; i++) {
             gettimeofday(&h_start, NULL);
+
+#ifdef GATHER
+            cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i, sub_m);
+#else
             cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i);
+#endif
             gettimeofday(&h_end, NULL);
             fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);  
             d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize); 
@@ -197,7 +216,11 @@ int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
                 // memset(hugepage_addr, 0, HUGEPAGE_SZ);
                 // printf("i: %d, j: %d, k: %d\n", i, j, k);
                 gettimeofday(&h_start, NULL);
+#ifdef GATHER
+                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k, sub_m);
+#else
                 cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k);
+#endif
                 gettimeofday(&h_end, NULL);
                 fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
                 d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_h, dsize);
@@ -255,7 +278,7 @@ int main(int argc, char** argv) {
     printf("calculating the answer...\n");
     memset(answer_c, 0, n * n * sizeof(float));
     gettimeofday(&h_start, NULL);
-    wholeMatrix_Dgemm(n, n, n, a, b, answer_c);
+    sequential_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, answer_c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("sequential format GEMM duration: %f ms\n", (float) duration / 1000);    
@@ -263,7 +286,7 @@ int main(int argc, char** argv) {
     printf("calculating the result of SPDK GEMM\n");
     memset(c, 0, n * n * sizeof(float));
     gettimeofday(&h_start, NULL);
-    spdk_blockSgemm_half_order(request_id, n, sub_n, c);
+    spdk_blockSgemm_half(request_id, n, sub_n, c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
