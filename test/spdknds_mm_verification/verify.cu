@@ -34,12 +34,12 @@ int verify(const float *C, const float *answer, int m, int n) {
     float relativeError;
     for(row = 0; row < m; ++row) {
         for(col = 0; col < n; ++col) {
-            if (isnan(C[row*n + col])) {
+            if (isnan(C[row*n + col]) || isnan(answer[row*n + col])) {
                 printf("(%d, %d) is NaN\n", row, col);
                 return 0; 
             }
 
-            if (isinf(C[row*n + col])) {
+            if (isinf(C[row*n + col]) || isinf(answer[row*n + col])) {
                 printf("(%d, %d) is inf\n", row, col);
                 return 0; 
             }
@@ -148,6 +148,8 @@ int spdk_nds_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
     cublasDestroy(handle);
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
+    cudaFree(a_sub_h);
+    cudaFree(b_sub_h);
     cudaFree(c_sub_f);
     return 0;
 }
@@ -231,12 +233,15 @@ int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
     cublasDestroy(handle);
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
+    cudaFree(a_sub_h);
+    cudaFree(b_sub_h);
     cudaFree(c_sub_f);
     return 0;
 }
 
-int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
+int spdk_nds_blockSgemm_half_alt(int request_id, int m, int sub_m, float *c) {
     int i, j, k;
+    size_t cross_row = m * sub_m, cross_col = sub_m * sub_m;
     double *hugepage_addr;
     struct JSONRPCClient client;
     int rc;
@@ -249,7 +254,6 @@ int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
     struct timeval h_start, h_end;
     unsigned long long fetch_time = 0, gemm_time = 0;
     
-    size_t out_pitch, ldc;
     size_t dsize;
     cublasHandle_t handle;
 
@@ -275,8 +279,8 @@ int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
     cudaMalloc((void **) &a_sub_h, sizeof(half) * dsize);
     cudaMalloc((void **) &b_sub_h, sizeof(half) * dsize);
 
-    cudaMallocPitch((void **) &c_sub_f, &out_pitch, sizeof(float) * sub_m, sub_m);
-    ldc = out_pitch / sizeof(float);
+    cudaMalloc((void **) &c_sub_f, sizeof(float) * dsize);
+    cudaMemset(c_sub_f, 0, sizeof(float) * dsize);
 
     // blockGEMM
     for (k = 0; k < m / sub_m; k++) {
@@ -304,13 +308,13 @@ int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
                 fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
                 d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_h, dsize);
                 // gemm
-                cudaMemcpy2D(c_sub_f, m * sizeof(float), (c + (i * sub_m) * m + (j * sub_m)), out_pitch, sizeof(float) * sub_m, sub_m, cudaMemcpyHostToDevice);
+                cudaMemcpy(c_sub_f, (c + i * cross_row + j * cross_col), dsize * sizeof(float), cudaMemcpyHostToDevice);                
                 gettimeofday(&h_start, NULL);
-                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, ldc, a_sub_h, CUDA_R_16F, ldc, &beta, c_sub_f, CUDA_R_32F, ldc, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, sub_m, a_sub_h, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
                 cudaDeviceSynchronize();
                 gettimeofday(&h_end, NULL);
                 gemm_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
-                cudaMemcpy2D((c + (i * sub_m) * m + (j * sub_m)), m * sizeof(float), c_sub_f, out_pitch, sizeof(float) * sub_m, sub_m, cudaMemcpyDeviceToHost);
+                cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, dsize * sizeof(float), cudaMemcpyDeviceToHost);
             }
         }   
     }
@@ -321,6 +325,8 @@ int spdk_blockSgemm_half_order(int request_id, int m, int sub_m, float *c) {
     cublasDestroy(handle);
     cudaFree(a_sub_d);
     cudaFree(b_sub_d);
+    cudaFree(a_sub_h);
+    cudaFree(b_sub_h);
     cudaFree(c_sub_f);
     return 0;
 }
@@ -357,7 +363,7 @@ int main(int argc, char** argv) {
     printf("calculating the answer...\n");
     memset(answer_c, 0, n * n * sizeof(float));
     gettimeofday(&h_start, NULL);
-    sequential_blockSgemm_half(n, n, n, sub_n, sub_n, sub_n, a, b, answer_c);
+    tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, answer_c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("sequential format GEMM duration: %f ms\n", (float) duration / 1000);    
@@ -365,7 +371,7 @@ int main(int argc, char** argv) {
     printf("calculating the result of SPDK GEMM\n");
     memset(c, 0, n * n * sizeof(float));
     gettimeofday(&h_start, NULL);
-    spdk_blockSgemm_half(request_id, n, sub_n, c);
+    spdk_blockSgemm_half_alt(request_id, n, sub_n, c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
