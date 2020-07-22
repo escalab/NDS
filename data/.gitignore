@@ -1,3 +1,5 @@
 *.bin
 datagen_double
 datagen_long
+datagen_double_seq
+datagen_seq2tensor
