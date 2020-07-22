@@ -76,10 +76,10 @@ cJSON *create_rpc_json_object(struct JSONRPCClient *client, char *method_string,
     return request_json;
 }
 
-char *create_tensorstore_get_gather_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y, int sub_m) {
+char *create_tensorstore_get_gather_matrix_json_string(struct JSONRPCClient* client, int id, int x, int y, int sub_m, char* rpc_method) {
     cJSON *params = create_get_tensorstore_gather_matrix_param(id, x, y, sub_m);
 
-    cJSON *request = create_rpc_json_object(client, "get_tensorstore_gather_matrix", params);
+    cJSON *request = create_rpc_json_object(client, rpc_method, params);
     char *request_string = cJSON_PrintUnformatted(request);
     
     cJSON_Delete(request);
