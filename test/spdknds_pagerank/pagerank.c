@@ -33,7 +33,7 @@
 
 // construct vertices metadata first
 
-void pagerank_update(double* prev_pr, double* curr_pr, double *vertices, int id, int64_t* inedge, int64_t *outedge, int num_of_vertices, int iter, int niters) {
+void pagerank_update(double* prev_pr, double* curr_pr, double *vertices, int id, int64_t* inedge, int64_t *outedge, int num_of_vertices, int num_of_subvertices, int iter, int niters) {
     // v.outc is num_outedges()
     // needs: v.num_inedges(), v.inedge(), v.id(), v.outc, v.set_data
     int i, outc = 0;
@@ -49,7 +49,7 @@ void pagerank_update(double* prev_pr, double* curr_pr, double *vertices, int id,
     if (iter > 0) {
         for (i = 0; i < num_of_vertices; i++) {
             // we don't consider self-loop
-            if (inedge[i] && i != id) {
+            if (inedge[i * num_of_subvertices] && i != id) {
                 sum += prev_pr[i];
             }
         }
@@ -81,7 +81,7 @@ void pagerank_update(double* prev_pr, double* curr_pr, double *vertices, int id,
 int main(int argc, char** argv) {
     int id, rc;
     size_t num_of_vertices, num_of_subvertices, niters;
-    size_t stripe_size, iter, st, i;
+    size_t stripe_size, iter, st, i, j;
     
     int64_t *graph, *outedges, *inedges;
     struct JSONRPCClient client;
@@ -156,6 +156,9 @@ int main(int argc, char** argv) {
             tensorstore_get_row_stripe_submatrix(&client, id, st, st+1, num_of_subvertices);
             memcpy(outedges, graph, stripe_size);
             // get_outedges(graph, outedges, st, num_of_vertices_per_stripe, num_of_vertices);
+            
+            tensorstore_get_col_stripe_submatrix(&client, id, st, st+1, num_of_subvertices);
+            memcpy(inedges, graph, stripe_size);
 
             // inedges need to be transposed (?)
             // get_inedges(graph, inedges, st, st + num_of_vertices_per_stripe, num_of_vertices);
@@ -174,7 +177,7 @@ int main(int argc, char** argv) {
             // userprogram.update(v, chicontext);
             // update(graphchi_vertex<VertexDataType, EdgeDataType> &v, graphchi_context &ginfo);
             for (i = 0; i < num_of_subvertices; i++) {
-                pagerank_update(prev_pr, curr_pr, vertices, (st * num_of_subvertices) + i, (outedges + i * num_of_vertices), (outedges + i * num_of_vertices), num_of_vertices, iter, niters);
+                pagerank_update(prev_pr, curr_pr, vertices, (st * num_of_subvertices) + i, (inedges + i), (outedges + i * num_of_vertices), num_of_vertices, num_of_subvertices, iter, niters);
                 // pagerank_update(prev_pr, curr_pr, vertices, i, (inedges + i * num_of_vertices), (outedges + i * num_of_vertices), num_of_vertices, iter, niters);
             }
             /* postprocessing */
