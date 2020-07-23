@@ -44,7 +44,7 @@ __global__ void pagerank_update(double* prev_pr, double* curr_pr, double *vertic
     if (id >= num_of_subvertices) {
         return;
     }
-    
+
     int64_t *outedge = outedges + id * num_of_vertices;
     int64_t *inedge = inedges + id;
     int i, outc = 0;
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
 
     // timing
     struct timeval h_start, h_end;
-    uint64_t fetch_time = 0, kernel_time = 0;
+    uint64_t fetch_row_time = 0, fetch_col_time = 0, kernel_time = 0;
 
     if (argc < 5) {
         printf("usage: %s <matrix id> <# of vertices> <# of subvertices> <niters>\n", argv[0]);
@@ -172,12 +172,15 @@ int main(int argc, char** argv) {
             gettimeofday(&h_start, NULL);
             return_size = tensorstore_get_row_stripe_submatrix(&client, id, st, st+1, num_of_subvertices);
             cudaMemcpy(outedges, graph, return_size, cudaMemcpyHostToDevice);
+            gettimeofday(&h_end, NULL);
+            fetch_row_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
             // get_outedges(graph, outedges, st, num_of_vertices_per_stripe, num_of_vertices);
             
+            gettimeofday(&h_start, NULL);
             return_size = tensorstore_get_col_stripe_submatrix(&client, id, st, st+1, num_of_subvertices);
             cudaMemcpy(inedges, graph, return_size, cudaMemcpyHostToDevice);
             gettimeofday(&h_end, NULL);
-            fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+            fetch_col_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
             // inedges need to be transposed (?)
             // get_inedges(graph, inedges, st, st + num_of_vertices_per_stripe, num_of_vertices);
 
@@ -225,7 +228,8 @@ int main(int argc, char** argv) {
         fprintf(fp, "%lu %f\n", i, vertices[i]);
     }
 
-    printf("data fetch time: %f ms\n", (float) fetch_time / 1000);
+    printf("row fetch time: %f ms\n", (float) fetch_row_time / 1000);
+    printf("col fetch time: %f ms\n", (float) fetch_col_time / 1000);
     printf("kernel time: %f ms\n", (float) kernel_time / 1000);
 
     fclose(fp);
