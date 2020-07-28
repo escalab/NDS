@@ -34,7 +34,7 @@ extern "C" {
     #include "spdkrpc.h"
 }
 
-#define THREADS_PER_BLOCK 512
+#define THREADS_PER_BLOCK 1024
 
 __global__ void
 Kernel2(bool* g_graph_mask, bool *g_updating_graph_mask, bool* g_graph_visited, bool *g_over, int no_of_nodes)
@@ -45,7 +45,7 @@ Kernel2(bool* g_graph_mask, bool *g_updating_graph_mask, bool* g_graph_visited, 
 	{
 		g_graph_mask[tid] = true;
 		g_graph_visited[tid] = true;
-		g_over[tid] = true;
+		*g_over = true;
 		g_updating_graph_mask[tid] = false;
 	}
 }
@@ -80,8 +80,8 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
  */
  int main(int argc, char** argv) {
     int id, rc;
-    size_t num_of_vertices, num_of_subvertices, niters;
-    size_t return_size, stripe_size, iter, st, i;
+    size_t num_of_vertices, num_of_subvertices;
+    size_t return_size, stripe_size, st, i;
     
     uint64_t *graph_h, *graph_d;
     struct JSONRPCClient client;
@@ -94,6 +94,10 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
     // timing
     struct timeval h_start, h_end;
     uint64_t fetch_row_time = 0, kernel_1_time = 0, kernel_2_time = 0;
+
+	bool *d_over;
+	bool h_over;
+	int k = 0;
 
     if (argc < 4) {
         printf("usage: %s <matrix id> <# of vertices> <# of subvertices>\n", argv[0]);
@@ -126,29 +130,14 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
 	graph_mask_h[source] = true;
 	cudaMemcpy(graph_mask_d, graph_mask_h, sizeof(bool) * num_of_vertices, cudaMemcpyHostToDevice);
 
-	bool *updating_graph_mask_h = (bool *)calloc(sizeof(bool), num_of_vertices);
     cudaMalloc((void **) &updating_graph_mask_d, sizeof(bool) * num_of_vertices);
 	cudaMemset(updating_graph_mask_d, 0, sizeof(bool) * num_of_vertices);
-
-	for (i = 0; i < num_of_vertices; i++) {
-		if (updating_graph_mask_h[i]) {
-			printf("updating_graph_mask_h i: %d\n", i);
-		}
-	}
 
 	bool *graph_visited_h = (bool *)calloc(sizeof(bool), num_of_vertices);
 	graph_visited_h[source] = true;
 	cudaMalloc((void **) &graph_visited_d, sizeof(bool) * num_of_vertices);
 	cudaMemcpy(graph_visited_d, graph_visited_h, sizeof(bool) * num_of_vertices, cudaMemcpyHostToDevice);
-	
-	for (i = 0; i < num_of_vertices; i++) {
-		if (graph_visited_h[i]) {
-			printf("graph_visited_h i: %d\n", i);
-		}
-	}
-	
 	free(graph_visited_h);
-
 
 	cost_h = (int *) malloc(sizeof(int) * num_of_vertices);
 	cudaMalloc((void **) &cost_d, sizeof(int) * num_of_vertices);
@@ -159,20 +148,14 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
 	cudaMemcpy(cost_d, cost_h, sizeof(int) * num_of_vertices, cudaMemcpyHostToDevice);
 
 	//make a bool to check if the execution is over
-	bool *d_over;
-	cudaMalloc((void**) &d_over, sizeof(bool) * num_of_vertices);
-	bool *temp = (bool *)calloc(sizeof(bool), num_of_vertices);
-
-	bool h_over;
-	int k = 0;
+	cudaMalloc((void**) &d_over, sizeof(bool));
 
 	//Call the Kernel untill all the elements of Frontier are not false
 	do
 	{
 		//if no thread changes this value then the loop stops
 		h_over = false;
-		memset(temp, 0, sizeof(bool) * num_of_vertices);
-		cudaMemset(d_over, 0, sizeof(bool) * num_of_vertices);
+		cudaMemset(d_over, 0, sizeof(bool));
 		for (st = 0; st < (num_of_vertices / num_of_subvertices); st++) {
 			// check whether we need to fetch the graph for the subsection
 			for (i = st*num_of_subvertices; i < (st+1) * num_of_subvertices; i++) {
@@ -206,22 +189,15 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
 		// check if kernel execution generated and error
 		gettimeofday(&h_end, NULL);
 		kernel_2_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
-		cudaMemcpy(temp, d_over, sizeof(bool) * num_of_vertices, cudaMemcpyDeviceToHost);
 		
-		for (i = 0; i < num_of_vertices; i++) {
-			if (temp[i]) {
-				// printf("temp i: %d\n", i);
-				h_over |= temp[i];
-			}
-		}
-
+		cudaMemcpy(&h_over, d_over, sizeof(bool), cudaMemcpyDeviceToHost);
 		cudaMemcpy(graph_mask_h, graph_mask_d, sizeof(bool) * num_of_vertices, cudaMemcpyDeviceToHost);
 		printf("h_over %d\n", h_over);
 		k++;
 	}
 	while(h_over);
 
-	cudaMemcpy(cost_h, cost_d, sizeof(int)*num_of_vertices, cudaMemcpyDeviceToHost) ;
+	cudaMemcpy(cost_h, cost_d, sizeof(int) * num_of_vertices, cudaMemcpyDeviceToHost) ;
 
     FILE *fp = fopen("log.txt", "w");
     for (i = 0; i < num_of_vertices; i++) {
