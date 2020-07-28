@@ -110,7 +110,9 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
         return rc;
     }
 
-    graph_h = (uint64_t *) mmap_to_tensorstore_hugepage();
+	graph_h = (uint64_t *) mmap_to_tensorstore_hugepage();
+	
+	
     if (graph_h == NULL) {
         return -1;
     }
