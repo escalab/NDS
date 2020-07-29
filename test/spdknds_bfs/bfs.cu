@@ -112,7 +112,7 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
 
 	graph_h = (uint64_t *) mmap_to_tensorstore_hugepage();
 	
-	
+
     if (graph_h == NULL) {
         return -1;
     }
@@ -135,11 +135,8 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
     cudaMalloc((void **) &updating_graph_mask_d, sizeof(bool) * num_of_vertices);
 	cudaMemset(updating_graph_mask_d, 0, sizeof(bool) * num_of_vertices);
 
-	bool *graph_visited_h = (bool *)calloc(sizeof(bool), num_of_vertices);
-	graph_visited_h[source] = true;
 	cudaMalloc((void **) &graph_visited_d, sizeof(bool) * num_of_vertices);
-	cudaMemcpy(graph_visited_d, graph_visited_h, sizeof(bool) * num_of_vertices, cudaMemcpyHostToDevice);
-	free(graph_visited_h);
+	cudaMemset(graph_visited_d + source, true, sizeof(bool));
 
 	cost_h = (int *) malloc(sizeof(int) * num_of_vertices);
 	cudaMalloc((void **) &cost_d, sizeof(int) * num_of_vertices);
@@ -160,47 +157,39 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
 		cudaMemset(d_over, 0, sizeof(bool));
 		for (st = 0; st < (num_of_vertices / num_of_subvertices); st++) {
 			// check whether we need to fetch the graph for the subsection
-			for (i = st*num_of_subvertices; i < (st+1) * num_of_subvertices; i++) {
+			for (i = st * num_of_subvertices; i < (st+1) * num_of_subvertices; i++) {
 				if (graph_mask_h[i]) {
 					gettimeofday(&h_start, NULL);
 					return_size = tensorstore_get_row_stripe_submatrix(&client, id, st, st+1, num_of_subvertices);					
 					cudaMemcpy(graph_d, graph_h, return_size, cudaMemcpyHostToDevice);
 					gettimeofday(&h_end, NULL);
-					fetch_row_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   		
+					fetch_row_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+					
+					// updating the cost of nodes that are masked in d_graph_mask
+					gettimeofday(&h_start, NULL);
+					Kernel<<<(num_of_subvertices+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(st, graph_d, graph_mask_d, updating_graph_mask_d, graph_visited_d, cost_d, num_of_vertices, num_of_subvertices);
+					gettimeofday(&h_end, NULL);
+					kernel_1_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   			
 					break;
 				}
 			}
-
-			// if we don't need to fetch subgraph for this subsection, we can skip.
-			if (i == ((st+1) * num_of_subvertices)) {
-				continue;
-			}
-
-			// printf("kernel1\n");
-			// updating the cost of nodes that are masked in d_graph_mask
-			gettimeofday(&h_start, NULL);
-			Kernel<<<(num_of_subvertices+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(st, graph_d, graph_mask_d, updating_graph_mask_d, graph_visited_d, cost_d, num_of_vertices, num_of_subvertices);
-            gettimeofday(&h_end, NULL);
-            kernel_1_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
 		}
 
-		// printf("kernel2\n");
 		// expanding the search to the next step
 		gettimeofday(&h_start, NULL);
 		Kernel2<<<(num_of_vertices+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(graph_mask_d, updating_graph_mask_d, graph_visited_d, d_over, num_of_vertices);
-		// check if kernel execution generated and error
 		gettimeofday(&h_end, NULL);
 		kernel_2_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
 		
 		cudaMemcpy(&h_over, d_over, sizeof(bool), cudaMemcpyDeviceToHost);
 		cudaMemcpy(graph_mask_h, graph_mask_d, sizeof(bool) * num_of_vertices, cudaMemcpyDeviceToHost);
-		printf("h_over %d\n", h_over);
 		k++;
 	}
 	while(h_over);
 
-	cudaMemcpy(cost_h, cost_d, sizeof(int) * num_of_vertices, cudaMemcpyDeviceToHost) ;
+	printf("Kernel Executed %d times\n",k);
 
+	cudaMemcpy(cost_h, cost_d, sizeof(int) * num_of_vertices, cudaMemcpyDeviceToHost) ;
     FILE *fp = fopen("log.txt", "w");
     for (i = 0; i < num_of_vertices; i++) {
         fprintf(fp, "%d) cost:%d\n", i, cost_h[i]);
@@ -210,7 +199,8 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
     printf("kernel 1 time : %f ms\n", (float) kernel_1_time / 1000);
     printf("kernel 2 time: %f ms\n", (float) kernel_2_time / 1000);
 
-    fclose(fp);
+	fclose(fp);
+	
 	// cleanup
 	free(cost_h);
 	free(graph_mask_h);
@@ -219,7 +209,8 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
     cudaFree(graph_mask_d);
     cudaFree(updating_graph_mask_d);
     cudaFree(graph_visited_d);
-    cudaFree(d_over);
-
+	cudaFree(cost_d);
+	cudaFree(d_over);
+	
     return 0;
 }
