@@ -97,7 +97,8 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
 
 	bool *d_over;
 	bool h_over;
-	int k = 0;
+	int iter = 0, fetch_iter = 0;
+	FILE *fp;
 
     if (argc < 4) {
         printf("usage: %s <matrix id> <# of vertices> <# of subvertices>\n", argv[0]);
@@ -164,7 +165,8 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
 					cudaMemcpy(graph_d, graph_h, return_size, cudaMemcpyHostToDevice);
 					gettimeofday(&h_end, NULL);
 					fetch_row_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
-					
+					fetch_iter++;
+
 					// updating the cost of nodes that are masked in d_graph_mask
 					gettimeofday(&h_start, NULL);
 					Kernel<<<(num_of_subvertices+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(st, graph_d, graph_mask_d, updating_graph_mask_d, graph_visited_d, cost_d, num_of_vertices, num_of_subvertices);
@@ -183,14 +185,14 @@ Kernel(size_t st, uint64_t* g_graph_nodes, bool* g_graph_mask, bool* g_updating_
 		
 		cudaMemcpy(&h_over, d_over, sizeof(bool), cudaMemcpyDeviceToHost);
 		cudaMemcpy(graph_mask_h, graph_mask_d, sizeof(bool) * num_of_vertices, cudaMemcpyDeviceToHost);
-		k++;
+		iter++;
 	}
 	while(h_over);
 
-	printf("Kernel Executed %d times\n",k);
+	printf("Kernel Executed %d times, Row fetched %d times\n", iter, fetch_iter);
 
-	cudaMemcpy(cost_h, cost_d, sizeof(int) * num_of_vertices, cudaMemcpyDeviceToHost) ;
-    FILE *fp = fopen("log.txt", "w");
+	cudaMemcpy(cost_h, cost_d, sizeof(int) * num_of_vertices, cudaMemcpyDeviceToHost);
+    fp = fopen("log.txt", "w");
     for (i = 0; i < num_of_vertices; i++) {
         fprintf(fp, "%d) cost:%d\n", i, cost_h[i]);
     }
