@@ -121,7 +121,7 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
 
     // timing
     struct timeval h_start, h_end;
-    long duration;
+    uint64_t fetch_row_time = 0, fetch_col_time = 0, write_row_time = 0, kernel_time = 0;
 
     if (argc < 6) {
         printf("usage: %s <graph 1 path> <graph 2 path> <# of vertices> <# of subvertices> <niters>\n", argv[0]);
@@ -189,7 +189,7 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
             checkKernelErrors(cudaMemset(updated_d, 0, sizeof(int)));
             // cudaMemset(outedges, 0, stripe_size);
 
-            printf("st: %lu\n", st);
+            printf("st: %lu\n", st * num_of_subvertices);
             /* preprocessing */
 
             // userprogram.before_exec_interval(interval_st, interval_en, chicontext);
@@ -198,11 +198,17 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
             // flush things back from sliding_shards
 
             // create a new memory shard
+            gettimeofday(&h_start, NULL);
             return_size = tensorstore_get_row_stripe_submatrix(&client, fd_out, st, st+1, num_of_subvertices);
             cudaMemcpy(outedges, graph, return_size, cudaMemcpyHostToDevice);
+            gettimeofday(&h_end, NULL);
+            fetch_row_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
 
+            gettimeofday(&h_start, NULL);
             return_size = tensorstore_get_col_stripe_submatrix(&client, fd_in, st, st+1, num_of_subvertices);
             cudaMemcpy(inedges, graph, return_size, cudaMemcpyHostToDevice);
+            gettimeofday(&h_end, NULL);
+            fetch_col_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
 
             // printf("%p %p\n", in_graph, out_graph);
             // printf("%p %p\n", outedges, inedges);
@@ -220,12 +226,10 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
             // update vertices one by one
             // userprogram.update(v, chicontext);
             // update(graphchi_vertex<VertexDataType, EdgeDataType> &v, graphchi_context &ginfo);
+            gettimeofday(&h_start, NULL);
             pagerank_update<<<(num_of_subvertices+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(vertices_d, st * num_of_subvertices, inedges, outedges, updated_d, num_of_vertices, num_of_subvertices, iter, niters);
-            cudaError_t __err = cudaGetLastError();                 
-            if (__err != cudaSuccess) {                             
-              printf("Line %d: failed: %s\n", __LINE__, cudaGetErrorString(__err));                    
-              abort();                                              
-            }                                                       
+            gettimeofday(&h_end, NULL);
+            kernel_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);                                                    
             
             cudaDeviceSynchronize();
             /* postprocessing */
@@ -233,9 +237,11 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
             checkKernelErrors(cudaMemcpy(&updated_h, updated_d, sizeof(int), cudaMemcpyDeviceToHost));
             
             if (updated_h) {
-                printf("updating\n");
+                gettimeofday(&h_start, NULL);
                 cudaMemcpy(graph, outedges, return_size, cudaMemcpyDeviceToHost);
                 return_size = tensorstore_write_row_stripe_submatrix(&client, fd_out, st, st+1, num_of_subvertices);
+                gettimeofday(&h_end, NULL);
+                write_row_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);                                                        
             }
 
             // save_vertices(vertices);
@@ -266,6 +272,11 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
         fprintf(fp, "%lu %f\n", i, vertices[i]);
     }
     fclose(fp);
+
+    printf("row fetch time: %f ms\n", (float) fetch_row_time / 1000);
+    printf("col fetch time: %f ms\n", (float) fetch_col_time / 1000);
+    printf("kernel time: %f ms\n", (float) kernel_time / 1000);
+    printf("row write time: %f ms\n", (float) write_row_time / 1000);
 
     // cleanup
     cudaFree(outedges);
