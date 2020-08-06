@@ -109,11 +109,13 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
  * maybe we can borrow the log system from graphchi?
  */
  int main(int argc, char** argv) {
-    double *in_graph, *out_graph, *temp, *outedges, *inedges;
-    int fd_1, fd_2;
+    double *graph, *outedges, *inedges;
+    int rc, temp, fd_in, fd_out;
     size_t num_of_vertices, num_of_subvertices, niters;
     size_t return_size, stripe_size, iter, st, i;
     int updated_h, *updated_d;
+    struct JSONRPCClient client;
+
     // result
     double *vertices, *vertices_d;
 
@@ -127,20 +129,29 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
     } 
 
     // I/O part, open in mmap mode
-    fd_1 = open(argv[1], O_RDWR);
-    fd_2 = open(argv[2], O_RDWR);
+    fd_in = atoi(argv[1]);
+    fd_out = atoi(argv[2]);
     num_of_vertices = (size_t) atoi(argv[3]);
     num_of_subvertices = (size_t) atoi(argv[4]);
     niters = (size_t) atoi(argv[5]);
-    in_graph = (double *) mmap(NULL, sizeof(double) * num_of_vertices * num_of_vertices, PROT_READ | PROT_WRITE, MAP_SHARED, fd_1, 0);
-    out_graph = (double *) mmap(NULL, sizeof(double) * num_of_vertices * num_of_vertices, PROT_READ | PROT_WRITE, MAP_SHARED, fd_2, 0);
 
     stripe_size = num_of_vertices * num_of_subvertices * sizeof(double);
-    printf("path 1: %s\n", argv[1]);
-    printf("path 2: %s\n", argv[2]);
+    printf("matrix 1: %d\n", fd_in);
+    printf("matrix 2: %d\n", fd_out);
     printf("num_of_vertices: %lu\n", num_of_vertices);
     printf("num_of_subvertices: %lu\n", num_of_subvertices);
     printf("niters: %lu\n", niters);
+
+    rc = connect_to_spdkrpc_server(&client);
+    if (rc) {
+        printf("cannot create conntection to SPDK RPC server");
+        return rc;
+    }
+
+    graph = (double *) mmap_to_tensorstore_hugepage();
+    if (graph == NULL) {
+        return -1;
+    }
 
     // PR initialization
     vertices = (double *) calloc(sizeof(double), num_of_vertices);
@@ -172,7 +183,7 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
 
         // Interval loop
         // assume we have no subinterval in an interval.
-        for (st = 0; st < num_of_vertices; st += num_of_subvertices) {
+        for (st = 0; st < (num_of_vertices / num_of_subvertices); st++) {
             // checkKernelErrors(cudaMemcpy(updated_d, &updated_h, sizeof(int), cudaMemcpyHostToDevice));
             updated_h = 0;
             checkKernelErrors(cudaMemset(updated_d, 0, sizeof(int)));
@@ -187,8 +198,12 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
             // flush things back from sliding_shards
 
             // create a new memory shard
-            get_outedges(out_graph, outedges, st, num_of_vertices, num_of_subvertices);
-            get_inedges(in_graph, inedges, st, num_of_vertices, num_of_subvertices);
+            return_size = tensorstore_get_row_stripe_submatrix(&client, fd_out, st, st+1, num_of_subvertices);
+            cudaMemcpy(outedges, graph, return_size, cudaMemcpyHostToDevice);
+
+            return_size = tensorstore_get_col_stripe_submatrix(&client, fd_in, st, st+1, num_of_subvertices);
+            cudaMemcpy(inedges, graph, return_size, cudaMemcpyHostToDevice);
+
             // printf("%p %p\n", in_graph, out_graph);
             // printf("%p %p\n", outedges, inedges);
 
@@ -205,7 +220,7 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
             // update vertices one by one
             // userprogram.update(v, chicontext);
             // update(graphchi_vertex<VertexDataType, EdgeDataType> &v, graphchi_context &ginfo);
-            pagerank_update<<<(num_of_subvertices+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(vertices_d, st, inedges, outedges, updated_d, num_of_vertices, num_of_subvertices, iter, niters);
+            pagerank_update<<<(num_of_subvertices+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(vertices_d, st * num_of_subvertices, inedges, outedges, updated_d, num_of_vertices, num_of_subvertices, iter, niters);
             cudaError_t __err = cudaGetLastError();                 
             if (__err != cudaSuccess) {                             
               printf("Line %d: failed: %s\n", __LINE__, cudaGetErrorString(__err));                    
@@ -219,7 +234,8 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
             
             if (updated_h) {
                 printf("updating\n");
-                put_outedges(out_graph, outedges, st, num_of_vertices, num_of_subvertices);
+                cudaMemcpy(graph, outedges, return_size, cudaMemcpyDeviceToHost);
+                return_size = tensorstore_write_row_stripe_submatrix(&client, fd_out, st, st+1, num_of_subvertices);
             }
 
             // save_vertices(vertices);
@@ -233,9 +249,9 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
         }
         
         // swap
-        temp = in_graph;
-        in_graph = out_graph;
-        out_graph = temp;
+        temp = fd_in;
+        fd_in = fd_out;
+        fd_out = temp;
 
         // userprogram.after_iteration(iter, chicontext);
         // do nothing in PR
@@ -250,13 +266,8 @@ __global__ void pagerank_update(double *vertices, size_t st, double *in_graph, d
         fprintf(fp, "%lu %f\n", i, vertices[i]);
     }
     fclose(fp);
+
     // cleanup
-    munmap(in_graph, sizeof(double) * num_of_vertices * num_of_vertices);
-    close(fd_1);
-
-    munmap(out_graph, sizeof(double) * num_of_vertices * num_of_vertices);
-    close(fd_2);
-
     cudaFree(outedges);
     cudaFree(inedges);
     cudaFree(vertices_d);
