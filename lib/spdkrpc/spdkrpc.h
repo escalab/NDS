@@ -48,3 +48,4 @@ size_t tensorstore_get_submatrix(struct JSONRPCClient *client, int id, int x, in
 size_t tensorstore_get_gather_submatrix(struct JSONRPCClient *client, int id, int x, int y, int sub_m);
 size_t tensorstore_get_row_stripe_submatrix(struct JSONRPCClient *client, int id, int y0, int y1, int sub_m);
 size_t tensorstore_get_col_stripe_submatrix(struct JSONRPCClient *client, int id, int x0, int x1, int sub_n);
+size_t tensorstore_write_row_stripe_submatrix(struct JSONRPCClient *client, int id, int y0, int y1, int sub_m);
