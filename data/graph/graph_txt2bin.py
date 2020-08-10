@@ -1,18 +1,19 @@
 import sys
 import numpy
 
-if len(sys.argv) < 2:
-    print("usage: {} <graph txt>".format(sys.argv[0]))
+if len(sys.argv) < 3:
+    print("usage: {} <graph txt> <type>".format(sys.argv[0]))
     exit(1)
 
-outfile_name = "{}.bin".format(sys.argv[1].split('.')[0])
+outfile_name = "{}_{}.bin".format(sys.argv[1].split('.')[0], sys.argv[2])
+exec('t = numpy.{}'.format(sys.argv[2]))
 
 with open(sys.argv[1], 'r') as fin:
     with open(outfile_name, 'wb') as fout:
         first_line = fin.readline().split()
         num_vertex = int(first_line[0])
         num_edge = int(first_line[1]) * 2 # undirected graph
-        edges = numpy.zeros(num_vertex, dtype=numpy.int64)
+        edges = numpy.zeros(num_vertex, dtype=t)
         count = 0
         for line in fin:
             for idx in line.split():
