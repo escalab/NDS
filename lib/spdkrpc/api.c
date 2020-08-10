@@ -77,6 +77,7 @@ size_t tensorstore_get_submatrix(struct JSONRPCClient *client, int id, int x, in
     return return_size;
 }
 
+// TODO: merge those APIs
 size_t tensorstore_get_gather_submatrix(struct JSONRPCClient *client, int id, int x, int y, int sub_m) {
     char *request_string;
     size_t return_size; 
@@ -118,6 +119,18 @@ size_t tensorstore_write_row_stripe_submatrix(struct JSONRPCClient *client, int 
     size_t return_size; 
 
     request_string = create_tensorstore_get_gather_matrix_json_string(client, id, y0, y1, sub_m, "write_tensorstore_row_stripe_matrix");
+    return_size = send_request_and_get_returned_size(client, request_string);
+    
+    free(request_string);
+
+    return return_size;
+}
+
+size_t tensorstore_write_col_stripe_submatrix(struct JSONRPCClient *client, int id, int x0, int x1, int sub_n) {
+    char *request_string;
+    size_t return_size; 
+
+    request_string = create_tensorstore_get_gather_matrix_json_string(client, id, x0, x1, sub_n, "write_tensorstore_col_stripe_matrix");
     return_size = send_request_and_get_returned_size(client, request_string);
     
     free(request_string);
