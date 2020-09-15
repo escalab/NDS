@@ -1,5 +1,6 @@
 extern "C" {
     #include "spdkrpc.h"
+    #include "timing.h"
 }
 
 #include <stdio.h>
@@ -27,25 +28,25 @@ __global__ void d2h_kernel(const double *din, half *dout, size_t dsize) {
 	}
 }
 
-int verify(const float *C, const float *answer, int m, int n) {
+int verify(const float *C, const float *answer, uint64_t m, uint64_t n) {
     // also need to consider floating point error
     const float relativeTolerance = 1e-3;
-    int row, col;
+    uint64_t row, col;
     float relativeError;
     for(row = 0; row < m; ++row) {
         for(col = 0; col < n; ++col) {
             if (isnan(C[row*n + col]) || isnan(answer[row*n + col])) {
-                printf("(%d, %d) is NaN\n", row, col);
+                printf("(%lu, %lu) is NaN\n", row, col);
                 return 0; 
             }
 
             if (isinf(C[row*n + col]) || isinf(answer[row*n + col])) {
-                printf("(%d, %d) is inf\n", row, col);
+                printf("(%lu, %lu) is inf\n", row, col);
                 return 0; 
             }
             relativeError = (answer[row*n + col] - C[row*n + col]) / answer[row*n + col];
             if (fabs(relativeError) > relativeTolerance) {
-                printf("(%d, %d) = %f, supposed to be %f\n", row, col, C[row*n + col], answer[row*n + col]); 
+                printf("(%lu, %lu) = %f, supposed to be %f\n", row, col, C[row*n + col], answer[row*n + col]); 
                 printf("TEST FAILED\n\n");
                 return 0;
             }    
@@ -56,7 +57,7 @@ int verify(const float *C, const float *answer, int m, int n) {
 }
 
 #ifdef GATHER
-int cudaMemcpyFromMmap(struct JSONRPCClient *client, double *dst, const double *src, int id, int x, int y, int sub_m) {
+int cudaMemcpyFromMmap(struct JSONRPCClient *client, double *dst, const double *src, int id, int x, int y, uint64_t sub_m) {
     size_t return_size; 
     return_size = tensorstore_get_gather_submatrix(client, id, x, y, sub_m);
 #else
@@ -71,7 +72,7 @@ int cudaMemcpyFromMmap(struct JSONRPCClient *client, double *dst, const double *
     return 0;
 }
 
-int spdk_nds_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
+int spdk_nds_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *c) {
     size_t i, j, k;
     size_t cross_row = m * sub_m, cross_col = sub_m * sub_m;
     double *hugepage_addr;
@@ -154,8 +155,8 @@ int spdk_nds_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
     return 0;
 }
 
-int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
-    int i, j, k;
+int spdk_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *c) {
+    uint64_t i, j, k;
     double *hugepage_addr;
     struct JSONRPCClient client;
     int rc;
@@ -206,11 +207,11 @@ int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
                 // memset(hugepage_addr, 0, HUGEPAGE_SZ);
                 gettimeofday(&h_start, NULL);
 #ifdef GATHER
-                cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i, sub_m);
-                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k, sub_m);
+                cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, request_id, k, i, sub_m);
+                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, request_id, j, k, sub_m);
 #else
-                cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i);
-                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k);
+                cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, request_id, k, i);
+                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, request_id, j, k);
 #endif
                 gettimeofday(&h_end, NULL);
                 fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
@@ -239,8 +240,8 @@ int spdk_blockSgemm_half(int request_id, int m, int sub_m, float *c) {
     return 0;
 }
 
-int spdk_nds_blockSgemm_half_alt(int request_id, int m, int sub_m, float *c) {
-    int i, j, k;
+int spdk_nds_blockSgemm_half_alt(int request_id, uint64_t m, uint64_t sub_m, float *c) {
+    uint64_t i, j, k;
     size_t cross_row = m * sub_m, cross_col = sub_m * sub_m;
     double *hugepage_addr;
     struct JSONRPCClient client;
@@ -249,13 +250,28 @@ int spdk_nds_blockSgemm_half_alt(int request_id, int m, int sub_m, float *c) {
     half *a_sub_h, *b_sub_h;
     float *c_sub_f;
 
+    struct timing_info *fetch_timing;
+    struct timing_info *gemm_timing;
+
     float alpha = 1.0;
     float beta = 1.0;
-    struct timeval h_start, h_end;
-    unsigned long long fetch_time = 0, gemm_time = 0;
     
     size_t dsize;
     cublasHandle_t handle;
+
+    dsize = (m / sub_m) * (m / sub_m) * (m / sub_m);
+
+    fetch_timing = timing_info_new(dsize * 2);
+    if (fetch_timing == NULL) {
+        printf("cannot create fetch_timing\n");
+        return -1;
+    }
+
+    gemm_timing = timing_info_new(dsize);
+    if (gemm_timing == NULL) {
+        printf("cannot create gemm_timing\n");
+        return -1;
+    }
 
     // initialization
     cublasCreate(&handle);
@@ -263,7 +279,7 @@ int spdk_nds_blockSgemm_half_alt(int request_id, int m, int sub_m, float *c) {
 
     rc = connect_to_spdkrpc_server(&client);
     if (rc) {
-        printf("cannot create conntection to SPDK RPC server");
+        printf("cannot create conntection to SPDK RPC server\n");
         return rc;
     }
 
@@ -285,41 +301,37 @@ int spdk_nds_blockSgemm_half_alt(int request_id, int m, int sub_m, float *c) {
     // blockGEMM
     for (k = 0; k < m / sub_m; k++) {
         for (i = 0; i < m / sub_m; i++) {
-            gettimeofday(&h_start, NULL);
-
+            timing_info_push_start(fetch_timing);
 #ifdef GATHER
-            cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i, sub_m);
+            cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, request_id, k, i, sub_m);
 #else
-            cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i);
+            cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, request_id, k, i);
 #endif
-            gettimeofday(&h_end, NULL);
-            fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);  
+            timing_info_push_end(fetch_timing);
             d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize); 
             for (j = 0; j < m / sub_m; j++) {
                 // memset(hugepage_addr, 0, HUGEPAGE_SZ);
                 // printf("i: %d, j: %d, k: %d\n", i, j, k);
-                gettimeofday(&h_start, NULL);
+                timing_info_push_start(fetch_timing);
 #ifdef GATHER
-                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k, sub_m);
+                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, request_id, j, k, sub_m);
 #else
-                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k);
+                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, request_id, j, k);
 #endif
-                gettimeofday(&h_end, NULL);
-                fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+                timing_info_push_end(fetch_timing);
                 d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_h, dsize);
                 // gemm
                 cudaMemcpy(c_sub_f, (c + i * cross_row + j * cross_col), dsize * sizeof(float), cudaMemcpyHostToDevice);                
-                gettimeofday(&h_start, NULL);
+                timing_info_push_start(gemm_timing);
                 cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, sub_m, a_sub_h, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
                 cudaDeviceSynchronize();
-                gettimeofday(&h_end, NULL);
-                gemm_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+                timing_info_push_end(gemm_timing);
                 cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, dsize * sizeof(float), cudaMemcpyDeviceToHost);
             }
         }   
     }
-    printf("data fetch time: %f ms\n", (float) fetch_time / 1000);
-    printf("GEMM time: %f ms\n", (float) gemm_time / 1000);
+    printf("data fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
+    printf("GEMM time: %f ms\n", (float) timing_info_duration(gemm_timing) / 1000);
 
     munmap(hugepage_addr, HUGEPAGE_SZ);
     cublasDestroy(handle);
@@ -328,6 +340,8 @@ int spdk_nds_blockSgemm_half_alt(int request_id, int m, int sub_m, float *c) {
     cudaFree(a_sub_h);
     cudaFree(b_sub_h);
     cudaFree(c_sub_f);
+    timing_info_free(fetch_timing);
+    timing_info_free(gemm_timing);
     return 0;
 }
 
@@ -338,7 +352,8 @@ int main(int argc, char** argv) {
     float *c, *answer_c;
     struct timeval h_start, h_end;
     long duration;
-    int request_id, n, sub_n;
+    int request_id;
+    uint64_t n, sub_n;
     
     if (argc < 5) {
         printf("usage: %s <req matrix id> <n> <sub_n> <validated matrix>\n", argv[0]);
@@ -346,8 +361,8 @@ int main(int argc, char** argv) {
     }
 
     request_id = atoi(argv[1]);
-    n = atoi(argv[2]);
-    sub_n = atoi(argv[3]);
+    n = (uint64_t) atoll(argv[2]);
+    sub_n = (uint64_t) atoll(argv[3]);
 
     a_fd = open(argv[4], O_RDONLY);
     b_fd = open(argv[4], O_RDONLY);
@@ -371,7 +386,7 @@ int main(int argc, char** argv) {
     printf("calculating the result of SPDK GEMM\n");
     memset(c, 0, n * n * sizeof(float));
     gettimeofday(&h_start, NULL);
-    spdk_blockSgemm_half_alt(request_id, n, sub_n, c);
+    spdk_nds_blockSgemm_half_alt(request_id, n, sub_n, c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
@@ -388,7 +403,7 @@ int main(int argc, char** argv) {
     // }
 
 #ifdef DEBUG
-    int i, j;
+    uint64_t i, j;
     for (i = 0; i < n; i++) {
         for (j = 0; j < n; j++) {
             printf("%f ", a[i * n + j]);
