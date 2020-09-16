@@ -18,7 +18,7 @@ extern "C" {
 // for checking nan
 #include <math.h>
 
-#define THREADS_PER_BLOCK 256
+#define MAX_THREAD 1024
 
 __global__ void d2h_kernel(const double *din, half *dout, size_t dsize) {
 	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
@@ -130,8 +130,8 @@ int spdk_nds_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *
 #endif
                 gettimeofday(&h_end, NULL);
                 fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
-                d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize);
-                d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_h, dsize);
+                d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(a_sub_d, a_sub_h, dsize);
+                d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(b_sub_d, b_sub_h, dsize);
                 // gemm
                 gettimeofday(&h_start, NULL);
                 cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, sub_m, a_sub_h, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
@@ -215,8 +215,8 @@ int spdk_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *c) {
 #endif
                 gettimeofday(&h_end, NULL);
                 fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
-                d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize);
-                d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_h, dsize);
+                d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(a_sub_d, a_sub_h, dsize);
+                d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(b_sub_d, b_sub_h, dsize);
                 // gemm
                 gettimeofday(&h_start, NULL);
                 cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, ldc, a_sub_h, CUDA_R_16F, ldc, &beta, c_sub_f, CUDA_R_32F, ldc, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
@@ -251,6 +251,7 @@ int spdk_nds_blockSgemm_half_alt(int request_id, uint64_t m, uint64_t sub_m, flo
     float *c_sub_f;
 
     struct timing_info *fetch_timing;
+    struct timing_info *d2h_timing;
     struct timing_info *gemm_timing;
 
     float alpha = 1.0;
@@ -263,6 +264,12 @@ int spdk_nds_blockSgemm_half_alt(int request_id, uint64_t m, uint64_t sub_m, flo
 
     fetch_timing = timing_info_new(dsize * 2);
     if (fetch_timing == NULL) {
+        printf("cannot create fetch_timing\n");
+        return -1;
+    }
+
+    d2h_timing = timing_info_new(dsize * 2);
+    if (d2h_timing == NULL) {
         printf("cannot create fetch_timing\n");
         return -1;
     }
@@ -308,7 +315,11 @@ int spdk_nds_blockSgemm_half_alt(int request_id, uint64_t m, uint64_t sub_m, flo
             cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, request_id, k, i);
 #endif
             timing_info_push_end(fetch_timing);
-            d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(a_sub_d, a_sub_h, dsize); 
+
+            timing_info_push_start(d2h_timing);
+            d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(a_sub_d, a_sub_h, dsize); 
+            timing_info_push_end(d2h_timing);
+
             for (j = 0; j < m / sub_m; j++) {
                 // memset(hugepage_addr, 0, HUGEPAGE_SZ);
                 // printf("i: %d, j: %d, k: %d\n", i, j, k);
@@ -319,7 +330,10 @@ int spdk_nds_blockSgemm_half_alt(int request_id, uint64_t m, uint64_t sub_m, flo
                 cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, request_id, j, k);
 #endif
                 timing_info_push_end(fetch_timing);
-                d2h_kernel<<<(dsize+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,THREADS_PER_BLOCK>>>(b_sub_d, b_sub_h, dsize);
+
+                timing_info_push_start(d2h_timing);
+                d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(b_sub_d, b_sub_h, dsize);
+                timing_info_push_end(d2h_timing);
                 // gemm
                 cudaMemcpy(c_sub_f, (c + i * cross_row + j * cross_col), dsize * sizeof(float), cudaMemcpyHostToDevice);                
                 timing_info_push_start(gemm_timing);
@@ -331,6 +345,7 @@ int spdk_nds_blockSgemm_half_alt(int request_id, uint64_t m, uint64_t sub_m, flo
         }   
     }
     printf("data fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
+    printf("data fetch time: %f ms\n", (float) timing_info_duration(d2h_timing) / 1000);
     printf("GEMM time: %f ms\n", (float) timing_info_duration(gemm_timing) / 1000);
 
     munmap(hugepage_addr, HUGEPAGE_SZ);
@@ -341,6 +356,7 @@ int spdk_nds_blockSgemm_half_alt(int request_id, uint64_t m, uint64_t sub_m, flo
     cudaFree(b_sub_h);
     cudaFree(c_sub_f);
     timing_info_free(fetch_timing);
+    timing_info_free(d2h_timing);
     timing_info_free(gemm_timing);
     return 0;
 }
@@ -381,7 +397,7 @@ int main(int argc, char** argv) {
     tensor_blockSgemm(n, n, n, sub_n, sub_n, sub_n, a, b, answer_c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-    printf("sequential format GEMM duration: %f ms\n", (float) duration / 1000);    
+    printf("Answer GEMM duration: %f ms\n", (float) duration / 1000);    
 
     printf("calculating the result of SPDK GEMM\n");
     memset(c, 0, n * n * sizeof(float));
