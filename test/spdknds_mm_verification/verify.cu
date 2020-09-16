@@ -1,6 +1,7 @@
 extern "C" {
     #include "spdkrpc.h"
     #include "timing.h"
+    #include "fifo.h"
 }
 
 #include <stdio.h>
@@ -18,7 +19,25 @@ extern "C" {
 // for checking nan
 #include <math.h>
 
+#include <pthread.h>
+
 #define MAX_THREAD 1024
+#define FIFO_QUEUE_SIZE 4
+
+struct fetch_conf {
+    struct JSONRPCClient *client;
+    int request_id;
+    uint64_t m, sub_m;
+    double *a_sub_d, *b_sub_d;
+    double *hugepage_addr;
+    struct fifo *queue;
+    struct timing_info *fetch_timing;
+};
+
+struct fifo_entry {
+    double *a_sub_d, *b_sub_d;
+};
+
 
 __global__ void d2h_kernel(const double *din, half *dout, size_t dsize) {
 	size_t idx = threadIdx.x+blockDim.x*blockIdx.x;
@@ -72,7 +91,43 @@ int cudaMemcpyFromMmap(struct JSONRPCClient *client, double *dst, const double *
     return 0;
 }
 
-int spdk_nds_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *c) {
+void *fetch_thread(void *args) {
+    struct fetch_conf *conf = (struct fetch_conf *) args;
+    uint64_t i, j, k;
+    uint64_t dsize = conf->sub_m * conf->sub_m;
+    double *ptr_a, *ptr_b;
+    struct fifo_entry *entry = NULL;
+    uint64_t count = 0;
+    for (i = 0; i < conf->m / conf->sub_m; i++) {
+        for (j = 0; j < conf->m / conf->sub_m; j++) {
+            for (k = 0; k < conf->m / conf->sub_m; k++) {
+                while (fifo_full(conf->queue)) {
+
+                }
+                ptr_a = conf->a_sub_d + dsize * (count % FIFO_QUEUE_SIZE);
+                ptr_b = conf->b_sub_d + dsize * (count % FIFO_QUEUE_SIZE);
+                timing_info_push_start(conf->fetch_timing);
+#ifdef GATHER
+                cudaMemcpyFromMmap(conf->client, ptr_a, conf->hugepage_addr, conf->request_id, k, i, conf->sub_m);
+                cudaMemcpyFromMmap(conf->client, ptr_b, conf->hugepage_addr, conf->request_id, j, k, conf->sub_m);
+#else
+                cudaMemcpyFromMmap(conf->client, ptr_a, conf->hugepage_addr, conf->request_id, k, i);
+                cudaMemcpyFromMmap(conf->client, ptr_b, conf->hugepage_addr, conf->request_id, j, k);
+#endif
+                timing_info_push_end(conf->fetch_timing);
+                count++;
+
+                entry = (struct fifo_entry *) malloc(sizeof(struct fifo_entry));
+                entry->a_sub_d = ptr_a;
+                entry->b_sub_d = ptr_b;
+                fifo_push(conf->queue, entry);
+            }
+        }
+    }
+    return NULL;
+}
+
+int spdk_nds_blockSgemm_half_pthread(int request_id, uint64_t m, uint64_t sub_m, float *c) {
     size_t i, j, k;
     size_t cross_row = m * sub_m, cross_col = sub_m * sub_m;
     double *hugepage_addr;
@@ -90,7 +145,145 @@ int spdk_nds_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *
     size_t dsize;
     cublasHandle_t handle;
 
+    struct fifo *queue;
+    struct timing_info *fetch_timing;
+    pthread_t thread_id; 
+    struct fetch_conf conf;
+
     // initialization
+    cublasCreate(&handle);
+    cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
+
+    rc = connect_to_spdkrpc_server(&client);
+    if (rc) {
+        printf("cannot create conntection to SPDK RPC server");
+        return rc;
+    }
+
+    hugepage_addr = (double *) mmap_to_tensorstore_hugepage();
+    if (hugepage_addr == NULL) {
+        return -1;
+    }
+
+    dsize = (m / sub_m) * (m / sub_m) * (m / sub_m);
+    fetch_timing = timing_info_new(dsize * 2);
+    if (fetch_timing == NULL) {
+        printf("cannot create fetch_timing\n");
+        return -1;
+    }
+
+    queue = fifo_new(FIFO_QUEUE_SIZE);
+	if (queue == NULL) {
+        printf("cannot create queue\n");
+        return -1;
+	}
+
+    // cuda malloc
+    dsize = sub_m * sub_m;
+    cudaMalloc((void **) &a_sub_d, sizeof(double) * dsize * FIFO_QUEUE_SIZE);
+    cudaMalloc((void **) &b_sub_d, sizeof(double) * dsize * FIFO_QUEUE_SIZE);
+    cudaMalloc((void **) &a_sub_h, sizeof(half) * dsize);
+    cudaMalloc((void **) &b_sub_h, sizeof(half) * dsize);
+    cudaMalloc((void **) &c_sub_f, sizeof(float) * dsize);
+
+    // create thread here
+    conf.client = &client;
+    conf.request_id = request_id;
+    conf.m = m;
+    conf.sub_m = sub_m;
+    conf.a_sub_d = a_sub_d;
+    conf.b_sub_d = b_sub_d;
+    conf.hugepage_addr = hugepage_addr;
+    conf.queue = queue;
+    conf.fetch_timing = fetch_timing;
+
+	pthread_create(&thread_id, NULL, fetch_thread, &conf); 
+
+    struct fifo_entry *entry = NULL;
+    // blockGEMM
+    for (i = 0; i < m / sub_m; i++) {
+        for (j = 0; j < m / sub_m; j++) {
+            cudaMemset(c_sub_f, 0, sub_m * sub_m * sizeof(float));
+            for (k = 0; k < m / sub_m; k++) {
+                // printf("i: %lu, j: %lu, k: %lu\n", i, j, k);
+                // memset(hugepage_addr, 0, HUGEPAGE_SZ);
+                while (fifo_empty(queue)) {
+
+                }
+                entry = (struct fifo_entry *) fifo_pop(queue);
+
+                d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(entry->a_sub_d, a_sub_h, dsize);
+                d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(entry->b_sub_d, b_sub_h, dsize);
+                
+                free(entry);
+                // gemm
+                gettimeofday(&h_start, NULL);
+                cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, sub_m, a_sub_h, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                cudaDeviceSynchronize();
+                gettimeofday(&h_end, NULL);
+                gemm_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+            }
+            cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, sub_m * sub_m * sizeof(float), cudaMemcpyDeviceToHost);
+        }
+    }
+
+    pthread_join(thread_id, NULL); 
+    printf("data fetch time: %f ms\n", (float) fetch_time / 1000);
+    printf("GEMM time: %f ms\n", (float) gemm_time / 1000);
+
+    munmap(hugepage_addr, HUGEPAGE_SZ);
+    cublasDestroy(handle);
+    cudaFree(a_sub_d);
+    cudaFree(b_sub_d);
+    cudaFree(a_sub_h);
+    cudaFree(b_sub_h);
+    cudaFree(c_sub_f);
+    timing_info_free(fetch_timing);
+    fifo_free(queue);
+    return 0;
+}
+
+int spdk_nds_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *c) {
+    size_t i, j, k;
+    size_t cross_row = m * sub_m, cross_col = sub_m * sub_m;
+    double *hugepage_addr;
+    struct JSONRPCClient client;
+    int rc;
+    double *a_sub_d, *b_sub_d;
+    half *a_sub_h, *b_sub_h;
+    float *c_sub_f;
+
+    float alpha = 1.0;
+    float beta = 1.0;
+
+    struct timing_info *fetch_timing;
+    struct timing_info *d2h_timing;
+    struct timing_info *gemm_timing;
+    
+    size_t dsize;
+    cublasHandle_t handle;
+
+    // initialization
+    dsize = (m / sub_m) * (m / sub_m) * (m / sub_m);
+
+    fetch_timing = timing_info_new(dsize * 2);
+    if (fetch_timing == NULL) {
+        printf("cannot create fetch_timing\n");
+        return -1;
+    }
+
+    d2h_timing = timing_info_new(dsize * 2);
+    if (d2h_timing == NULL) {
+        printf("cannot create fetch_timing\n");
+        return -1;
+    }
+
+    gemm_timing = timing_info_new(dsize);
+    if (gemm_timing == NULL) {
+        printf("cannot create gemm_timing\n");
+        return -1;
+    }
+    
     cublasCreate(&handle);
     cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
 
@@ -120,30 +313,34 @@ int spdk_nds_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *
             for (k = 0; k < m / sub_m; k++) {
                 // printf("i: %lu, j: %lu, k: %lu\n", i, j, k);
                 // memset(hugepage_addr, 0, HUGEPAGE_SZ);
-                gettimeofday(&h_start, NULL);
+                timing_info_push_start(fetch_timing);
 #ifdef GATHER
-                cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i, sub_m);
-                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k, sub_m);
+                cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, request_id, k, i, sub_m);
+                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, request_id, j, k, sub_m);
 #else
-                cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, 0, k, i);
-                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, 0, j, k);
+                cudaMemcpyFromMmap(&client, a_sub_d, hugepage_addr, request_id, k, i);
+                cudaMemcpyFromMmap(&client, b_sub_d, hugepage_addr, request_id, j, k);
 #endif
-                gettimeofday(&h_end, NULL);
-                fetch_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+                timing_info_push_end(fetch_timing);
+
+                timing_info_push_start(d2h_timing);
                 d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(a_sub_d, a_sub_h, dsize);
                 d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(b_sub_d, b_sub_h, dsize);
+                timing_info_push_end(d2h_timing);
+
                 // gemm
-                gettimeofday(&h_start, NULL);
+                timing_info_push_start(gemm_timing);
                 cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, sub_m, a_sub_h, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
                 cudaDeviceSynchronize();
-                gettimeofday(&h_end, NULL);
-                gemm_time += ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);   
+                timing_info_push_end(gemm_timing);
             }
             cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, sub_m * sub_m * sizeof(float), cudaMemcpyDeviceToHost);
         }
     }
-    printf("data fetch time: %f ms\n", (float) fetch_time / 1000);
-    printf("GEMM time: %f ms\n", (float) gemm_time / 1000);
+    printf("data fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
+    printf("d2h time: %f ms\n", (float) timing_info_duration(d2h_timing) / 1000);
+    printf("GEMM time: %f ms\n", (float) timing_info_duration(gemm_timing) / 1000);
+
 
     munmap(hugepage_addr, HUGEPAGE_SZ);
     cublasDestroy(handle);
@@ -152,6 +349,11 @@ int spdk_nds_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *
     cudaFree(a_sub_h);
     cudaFree(b_sub_h);
     cudaFree(c_sub_f);
+
+    timing_info_free(fetch_timing);
+    timing_info_free(d2h_timing);
+    timing_info_free(gemm_timing);
+
     return 0;
 }
 
@@ -345,7 +547,7 @@ int spdk_nds_blockSgemm_half_alt(int request_id, uint64_t m, uint64_t sub_m, flo
         }   
     }
     printf("data fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
-    printf("data fetch time: %f ms\n", (float) timing_info_duration(d2h_timing) / 1000);
+    printf("d2h time: %f ms\n", (float) timing_info_duration(d2h_timing) / 1000);
     printf("GEMM time: %f ms\n", (float) timing_info_duration(gemm_timing) / 1000);
 
     munmap(hugepage_addr, HUGEPAGE_SZ);
@@ -402,7 +604,7 @@ int main(int argc, char** argv) {
     printf("calculating the result of SPDK GEMM\n");
     memset(c, 0, n * n * sizeof(float));
     gettimeofday(&h_start, NULL);
-    spdk_nds_blockSgemm_half_alt(request_id, n, sub_n, c);
+    spdk_nds_blockSgemm_half(request_id, n, sub_n, c);
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    

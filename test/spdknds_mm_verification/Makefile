@@ -5,7 +5,7 @@ LD_FLAGS += -L../../lib/spdkrpc/ -I../../lib/spdkrpc/ -lspdkrpc
 LD_FLAGS += -L../../lib/timing/ -I../../lib/timing/ -ltiming
 
 TARGET=spdk_gemm
-SRC=verify.cu
+SRC=verify.cu fifo.c
 
 ifeq ($(debug),1)
 	LD_FLAGS += -g -DDEBUG
