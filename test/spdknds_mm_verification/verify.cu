@@ -341,7 +341,6 @@ int spdk_nds_blockSgemm_half(int request_id, uint64_t m, uint64_t sub_m, float *
     printf("d2h time: %f ms\n", (float) timing_info_duration(d2h_timing) / 1000);
     printf("GEMM time: %f ms\n", (float) timing_info_duration(gemm_timing) / 1000);
 
-
     munmap(hugepage_addr, HUGEPAGE_SZ);
     cublasDestroy(handle);
     cudaFree(a_sub_d);
@@ -497,6 +496,7 @@ int spdk_nds_blockSgemm_half_alt_pthread(int request_id, uint64_t m, uint64_t su
     half *a_sub_h, *b_sub_h;
     float *c_sub_f;
 
+    struct timing_info *queue_timing;
     struct timing_info *fetch_timing;
     struct timing_info *d2h_timing;
     struct timing_info *gemm_timing;
@@ -511,7 +511,14 @@ int spdk_nds_blockSgemm_half_alt_pthread(int request_id, uint64_t m, uint64_t su
     pthread_t thread_id; 
     struct fetch_conf conf;
 
+    
     dsize = (m / sub_m) * (m / sub_m) * (m / sub_m);
+    
+    queue_timing = timing_info_new(dsize * 2);
+    if (queue_timing == NULL) {
+        printf("cannot create fetch_timing\n");
+        return -1;
+    }
 
     fetch_timing = timing_info_new(dsize * 2);
     if (fetch_timing == NULL) {
@@ -573,34 +580,77 @@ int spdk_nds_blockSgemm_half_alt_pthread(int request_id, uint64_t m, uint64_t su
     conf.queue = queue;
     conf.fetch_timing = fetch_timing;
 
+    timing_info_set_starting_time(queue_timing);
+    timing_info_set_starting_time(fetch_timing);
+    timing_info_set_starting_time(d2h_timing);
+    timing_info_set_starting_time(gemm_timing);
     pthread_create(&thread_id, NULL, fetch_thread_alt, &conf); 
     struct fifo_entry *entry = NULL;
     // blockGEMM
     for (k = 0; k < m / sub_m; k++) {
         for (i = 0; i < m / sub_m; i++) {
             for (j = 0; j < m / sub_m; j++) {
+                timing_info_push_start(queue_timing);
                 while (fifo_empty(queue)) {
 
                 }
                 entry = (struct fifo_entry *) fifo_pop(queue);
+                timing_info_push_end(queue_timing);
+
                 timing_info_push_start(d2h_timing);
                 d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(entry->a_sub_d, a_sub_h, dsize); 
                 d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(entry->b_sub_d, b_sub_h, dsize);
                 free(entry);
                 timing_info_push_end(d2h_timing);
                 // gemm
-                cudaMemcpy(c_sub_f, (c + i * cross_row + j * cross_col), dsize * sizeof(float), cudaMemcpyHostToDevice);                
                 timing_info_push_start(gemm_timing);
+                cudaMemcpy(c_sub_f, (c + i * cross_row + j * cross_col), dsize * sizeof(float), cudaMemcpyHostToDevice);                
                 cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, sub_m, sub_m, sub_m, &alpha, b_sub_h, CUDA_R_16F, sub_m, a_sub_h, CUDA_R_16F, sub_m, &beta, c_sub_f, CUDA_R_32F, sub_m, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
                 cudaDeviceSynchronize();
-                timing_info_push_end(gemm_timing);
                 cudaMemcpy((c + i * cross_row + j * cross_col), c_sub_f, dsize * sizeof(float), cudaMemcpyDeviceToHost);
+                timing_info_push_end(gemm_timing);
             }
         }   
     }
+    struct timestamps *tss = NULL;
+    FILE *fptr;
+
     printf("data fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
+    printf("queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);
     printf("d2h time: %f ms\n", (float) timing_info_duration(d2h_timing) / 1000);
     printf("GEMM time: %f ms\n", (float) timing_info_duration(gemm_timing) / 1000);
+
+    tss = timing_info_get_timestamps(fetch_timing);
+    fptr = fopen("fetch_ts.bin", "wb");
+    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
+    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
+    fclose(fptr);
+    timing_info_free_timestamps(tss);    
+    timing_info_free(fetch_timing);
+
+    tss = timing_info_get_timestamps(queue_timing);
+    fptr = fopen("queue_ts.bin", "wb");
+    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
+    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
+    fclose(fptr);
+    timing_info_free_timestamps(tss);    
+    timing_info_free(queue_timing);
+
+    tss = timing_info_get_timestamps(d2h_timing);
+    fptr = fopen("d2h_ts.bin", "wb");
+    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
+    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
+    fclose(fptr);
+    timing_info_free_timestamps(tss);    
+    timing_info_free(d2h_timing);
+
+    tss = timing_info_get_timestamps(gemm_timing);
+    fptr = fopen("gemm_ts.bin", "wb");
+    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
+    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
+    fclose(fptr);
+    timing_info_free_timestamps(tss);    
+    timing_info_free(gemm_timing);
 
     munmap(hugepage_addr, HUGEPAGE_SZ);
     cublasDestroy(handle);
@@ -609,9 +659,6 @@ int spdk_nds_blockSgemm_half_alt_pthread(int request_id, uint64_t m, uint64_t su
     cudaFree(a_sub_h);
     cudaFree(b_sub_h);
     cudaFree(c_sub_f);
-    timing_info_free(fetch_timing);
-    timing_info_free(d2h_timing);
-    timing_info_free(gemm_timing);
     return 0;
 }
 
