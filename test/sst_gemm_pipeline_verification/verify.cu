@@ -6,7 +6,7 @@ extern "C" {
 
 #include "cublasGEMM.h"
 
-#define MAX_THREAD 512
+#define MAX_THREAD 1024
 #define FIFO_QUEUE_SIZE 4
 #define IO_QUEUE_SZ 4UL
 
@@ -16,8 +16,8 @@ struct fetch_conf {
     double *a_sub_d, *b_sub_d;
     char *hugepage_addr;
     struct fifo *queue;
-    struct timing_info *fetch_a_timing;
-    struct timing_info *fetch_b_timing;
+    struct timing_info *fetch_timing;
+    struct timing_info *copy_in_timing;
 };
 
 struct fifo_entry {
@@ -88,6 +88,7 @@ void *fetch_thread(void *args) {
     for (i = 0; i < conf->m / conf->sub_m; i++) {
         for (j = 0; j < conf->m / conf->sub_m; j++) {
             for (k = 0; k < conf->m / conf->sub_m; k+=IO_QUEUE_SZ) {
+                timing_info_push_start(conf->fetch_timing);
                 if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
                     fprintf(stderr, "sync error before RDMA ops\n");
                     return NULL;
@@ -97,32 +98,32 @@ void *fetch_thread(void *args) {
                     fprintf(stderr, "sync error before RDMA ops\n");
                     return NULL;
                 }
+                timing_info_push_end(conf->fetch_timing);
 
+                timing_info_push_start(conf->copy_in_timing);
                 for (count = 0; count < IO_QUEUE_SZ; count++) {
                     while (fifo_full(conf->queue)) {
 
                     }
                     // printf("fetching A[%lu][%lu]\n", i, count+k);
     
-                    timing_info_push_start(conf->fetch_a_timing);
                     ptr_a = conf->a_sub_d + dsize * count;
                     hugepage_ptr = conf->hugepage_addr + (count * 2) * dsize * sizeof(double);
+
                     cudaMemcpy(ptr_a, hugepage_ptr, dsize * sizeof(double), cudaMemcpyHostToDevice);
-                    timing_info_push_end(conf->fetch_a_timing);
     
                     // printf("fetching B[%lu][%lu]\n", count+k, j);
-                    timing_info_push_start(conf->fetch_b_timing);
                     ptr_b = conf->b_sub_d + dsize * count;
                     hugepage_ptr = conf->hugepage_addr + (count * 2 + 1) * dsize * sizeof(double);
+                    
                     cudaMemcpy(ptr_b, hugepage_ptr, dsize * sizeof(double), cudaMemcpyHostToDevice);
-                    timing_info_push_end(conf->fetch_b_timing);
     
                     entry = (struct fifo_entry *) malloc(sizeof(struct fifo_entry));
                     entry->a_sub_d = ptr_a;
                     entry->b_sub_d = ptr_b;
                     fifo_push(conf->queue, entry);
                 }
-
+                timing_info_push_end(conf->copy_in_timing);
                 // if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
                 //     fprintf(stderr, "sync error before RDMA ops\n");
                 //     return NULL;
@@ -153,14 +154,17 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
 
     struct fifo *queue;
     struct timing_info *queue_timing;
-    struct timing_info *fetch_a_timing;
-    struct timing_info *fetch_b_timing;
+    struct timing_info *fetch_timing;
+    struct timing_info *copy_in_timing;
     struct timing_info *d2h_timing;
     struct timing_info *gemm_timing;
     struct timing_info *copy_out_timing;    
     
     pthread_t thread_id; 
     struct fetch_conf conf;
+
+    struct timeval h_start, h_end;
+    long duration;
 
     // initialization
     cublasCreate(&handle);
@@ -173,15 +177,15 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
         return -1;
     }
 
-    fetch_a_timing = timing_info_new(dsize);
-    if (fetch_a_timing == NULL) {
-        printf("cannot create fetch_a_timing\n");
+    fetch_timing = timing_info_new(dsize);
+    if (fetch_timing == NULL) {
+        printf("cannot create fetch_timing\n");
         return -1;
     }
 
-    fetch_b_timing = timing_info_new(dsize);
-    if (fetch_b_timing == NULL) {
-        printf("cannot create fetch_b_timing\n");
+    copy_in_timing = timing_info_new(dsize);
+    if (copy_in_timing == NULL) {
+        printf("cannot create copy_in_timing\n");
         return -1;
     }
 
@@ -225,18 +229,18 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
     conf.b_sub_d = b_sub_d;
     conf.hugepage_addr = res->buf;
     conf.queue = queue;
-    conf.fetch_a_timing = fetch_a_timing;
-    conf.fetch_b_timing = fetch_b_timing;
+    conf.fetch_timing = fetch_timing;
+    conf.copy_in_timing = copy_in_timing;
 
     timing_info_set_starting_time(queue_timing);
-    timing_info_set_starting_time(fetch_a_timing);
-    timing_info_set_starting_time(fetch_b_timing);
+    timing_info_set_starting_time(fetch_timing);
+    timing_info_set_starting_time(copy_in_timing);
     timing_info_set_starting_time(d2h_timing);
     timing_info_set_starting_time(gemm_timing);
     timing_info_set_starting_time(copy_out_timing);
 
+    gettimeofday(&h_start, NULL);
 	pthread_create(&thread_id, NULL, fetch_thread, &conf); 
-
     struct fifo_entry *entry = NULL;
     // blockGEMM
     for (i = 0; i < m / sub_m; i++) {
@@ -267,10 +271,14 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
             timing_info_push_end(copy_out_timing);
         }
     }
-
     pthread_join(thread_id, NULL); 
-    printf("fetch A time: %f ms\n", (float) timing_info_duration(fetch_a_timing) / 1000);
-    printf("fetch B time: %f ms\n", (float) timing_info_duration(fetch_b_timing) / 1000);
+
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+    printf("GEMM duration: %f ms\n", (float) duration / 1000);    
+
+    printf("Fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
+    printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
     printf("queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);
     printf("d2h time: %f ms\n", (float) timing_info_duration(d2h_timing) / 1000);
     printf("GEMM time: %f ms\n", (float) timing_info_duration(gemm_timing) / 1000);
@@ -278,21 +286,21 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
 
     struct timestamps *tss = NULL;
     FILE *fptr;
-    tss = timing_info_get_timestamps(fetch_a_timing);
-    fptr = fopen("fetch_a_ts.bin", "wb");
+    tss = timing_info_get_timestamps(fetch_timing);
+    fptr = fopen("fetch_ts.bin", "wb");
     fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
     fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
     fclose(fptr);
     timing_info_free_timestamps(tss);    
-    timing_info_free(fetch_a_timing);
+    timing_info_free(fetch_timing);
 
-    tss = timing_info_get_timestamps(fetch_b_timing);
-    fptr = fopen("fetch_b_ts.bin", "wb");
+    tss = timing_info_get_timestamps(copy_in_timing);
+    fptr = fopen("copy_in_ts.bin", "wb");
     fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
     fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
     fclose(fptr);
     timing_info_free_timestamps(tss);    
-    timing_info_free(fetch_b_timing);
+    timing_info_free(copy_in_timing);
     
     tss = timing_info_get_timestamps(queue_timing);
     fptr = fopen("queue_ts.bin", "wb");
@@ -449,11 +457,7 @@ int main(int argc, char *argv[]) {
     fprintf(stdout, "running server\n");
 
     printf("calculating the result of SPDK GEMM\n");
-    gettimeofday(&h_start, NULL);
     rc = spdk_nds_blockSgemm_half_pthread(&res, n, sub_n, c);
-    gettimeofday(&h_end, NULL);
-    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-    printf("GEMM duration: %f ms\n", (float) duration / 1000);    
 
     // config_destroy(&config);
 
