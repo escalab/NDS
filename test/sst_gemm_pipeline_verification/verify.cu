@@ -7,8 +7,8 @@ extern "C" {
 #include "cublasGEMM.h"
 
 #define MAX_THREAD 1024
-#define FIFO_QUEUE_SIZE 4
-#define IO_QUEUE_SZ 4UL
+#define IO_QUEUE_SZ (32768UL / 2048UL) 
+// #define IO_QUEUE_SZ 1UL
 
 struct fetch_conf {
     struct resources *res;
@@ -207,7 +207,8 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
         return -1;
     }
 
-    queue = fifo_new(FIFO_QUEUE_SIZE);
+    // it causes problem if size == 1
+    queue = fifo_new(IO_QUEUE_SZ * 2);
 	if (queue == NULL) {
         printf("cannot create queue\n");
         return -1;
@@ -215,8 +216,8 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
 
     // cuda malloc
     dsize = sub_m * sub_m;
-    cudaMalloc((void **) &a_sub_d, sizeof(double) * dsize * FIFO_QUEUE_SIZE);
-    cudaMalloc((void **) &b_sub_d, sizeof(double) * dsize * FIFO_QUEUE_SIZE);
+    cudaMalloc((void **) &a_sub_d, sizeof(double) * dsize * IO_QUEUE_SZ);
+    cudaMalloc((void **) &b_sub_d, sizeof(double) * dsize * IO_QUEUE_SZ);
     cudaMalloc((void **) &a_sub_h, sizeof(half) * dsize);
     cudaMalloc((void **) &b_sub_h, sizeof(half) * dsize);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * dsize);
