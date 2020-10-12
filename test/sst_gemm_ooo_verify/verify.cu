@@ -7,7 +7,12 @@ extern "C" {
 #include "cublasGEMM.h"
 
 #define MAX_THREAD 1024
-#define IO_QUEUE_SZ (32768UL / 4096UL) 
+
+#define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
+#define SUB_M 8192UL
+#define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
+
+#define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
 // #define IO_QUEUE_SZ 1UL
 
 struct fetch_conf {
@@ -39,27 +44,31 @@ int verify(const float *C, const float *answer, uint64_t m, uint64_t n) {
     const float relativeTolerance = 1e-3;
     uint64_t row, col;
     float relativeError;
+    int rc = 0;
     for(row = 0; row < m; ++row) {
         for(col = 0; col < n; ++col) {
             if (isnan(C[row*n + col]) || isnan(answer[row*n + col])) {
                 printf("(%lu, %lu) is NaN\n", row, col);
-                return 0; 
+                rc = 1; 
+                return rc;
             }
 
             if (isinf(C[row*n + col]) || isinf(answer[row*n + col])) {
                 printf("(%lu, %lu) is inf\n", row, col);
-                return 0; 
+                rc = 1; 
+                return rc;
             }
             relativeError = (answer[row*n + col] - C[row*n + col]) / answer[row*n + col];
             if (fabs(relativeError) > relativeTolerance) {
                 printf("(%lu, %lu) = %f, supposed to be %f\n", row, col, C[row*n + col], answer[row*n + col]); 
-                printf("TEST FAILED\n\n");
-                return 0;
+                // printf("TEST FAILED\n\n");
+                rc = 1; 
+                return rc;
             }    
         }
     }
     printf("TEST PASSED\n\n");
-    return 1;
+    return rc;
 }
 
 int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length) {
@@ -88,6 +97,10 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
     timing_info_push_end(conf->copy_in_timing);
 
     free(res);
+    // if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
+    //     fprintf(stderr, "sync error before RDMA ops\n");
+    //     return 1;
+    // }
     return 0;
 }
 
@@ -453,7 +466,7 @@ int main(int argc, char *argv[]) {
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("Answer GEMM duration: %f ms\n", (float) duration / 1000);    
 
-    verify(c, answer_c, n, n);
+    rc = verify(c, answer_c, n, n);
 
     if (resources_destroy(&res)) {
         fprintf(stderr, "failed to destroy resources\n");
