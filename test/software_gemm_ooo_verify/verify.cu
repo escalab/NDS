@@ -176,11 +176,11 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
         fprintf(stderr, "sync error before RDMA ops\n");
         return 1;
     }
-    if (res->id == 0) {
-        printf("fetching A[%lu][%lu]\n", res->y, res->x);
-    } else {
-        printf("fetching B[%lu][%lu]\n", res->y, res->x);
-    }
+    // if (res->id == 0) {
+    //     printf("fetching A[%lu][%lu]\n", res->y, res->x);
+    // } else {
+    //     printf("fetching B[%lu][%lu]\n", res->y, res->x);
+    // }
 
     timing_info_push_end(conf->fetch_timing);
 
@@ -506,12 +506,7 @@ int main(int argc, char *argv[]) {
     /* print the used parameters for info*/
     print_config(config);
 
-    printf("socket connection\n");
-    rc = make_tcp_connection(&res, &config);
-    if (rc < 0) {
-        perror("sock connect");
-        exit(1);
-    }
+
     // printf("establish socket\n");
     // server_sock = sock_server_connect("/var/tmp/spdk.sock", config.tcp_port);
     // if (server_sock < 0) {
@@ -548,6 +543,13 @@ int main(int argc, char *argv[]) {
 
     printf("hugepage starting address is: %p\n", hugepage_addr);
 
+    printf("socket connection\n");
+    rc = make_tcp_connection(&res, &config);
+    if (rc < 0) {
+        perror("sock connect");
+        exit(1);
+    }
+
     fprintf(stdout, "running server\n");
 
     printf("calculating the result of SPDK GEMM\n");
@@ -575,7 +577,6 @@ int main(int argc, char *argv[]) {
 
     free(answer_c);
     free(c);
-    unlink("/var/tmp/spdk.sock");
 
     printf("test result is %i\n", rc);
     return rc;
