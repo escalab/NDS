@@ -2,9 +2,6 @@ extern "C" {
     #include "rdma.h"
     #include "timing.h"
     #include "fifo.h"
-    #include <sys/types.h>
-    #include <sys/socket.h>
-    #include <sys/un.h>
 }
 
 #include "cublasGEMM.h"
@@ -17,6 +14,8 @@ extern "C" {
 
 #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
 // #define IO_QUEUE_SZ 1UL
+
+void print_config(struct config_t config);
 
 struct fetch_conf {
     struct resources *res;
@@ -38,97 +37,6 @@ __global__ void d2h_kernel(const double *din, half *dout, size_t dsize) {
 	{
 		dout[idx] = din[idx];
 	}
-}
-
-void print_config(struct config_t config);
-
-/******************************************************************************
- * Function: sock_client_connect
- *
- * Input
- * servername URL of server to connect to (NULL for server mode)
- * port port of service
- *
- * Output
- * none
- *
- * Returns
- * socket (fd) on success, negative error code on failure
- *
- * Description
- * Connect a socket. If servername is specified a client connection will be
- * initiated to the indicated server and port. Otherwise listen on the
- * indicated port for an incoming connection.
- *
- ******************************************************************************/
- int sock_client_connect(const char *servername, int port)
- {
-     int sockfd = -1;
-     int tmp;
-     unsigned long start_time_msec;
-     unsigned long cur_time_msec;
-     struct timeval cur_time;
-     struct sockaddr_un addr;
-     
-     if ((sockfd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1 ) {
-         perror("socket error");
-         return sockfd;
-     }
- 
-     memset(&addr, 0, sizeof(addr));
-     addr.sun_family = AF_UNIX;
-     strncpy(addr.sun_path, servername, sizeof(addr.sun_path)-1);
- 
-     /* Client mode. Initiate connection to remote */
-     gettimeofday(&cur_time, NULL);
-     start_time_msec = (cur_time.tv_sec * 1000) + (cur_time.tv_usec / 1000);
-     do
-     {
-         tmp = connect(sockfd, (struct sockaddr*)&addr, sizeof(addr));
-         gettimeofday(&cur_time, NULL);
-         cur_time_msec = (cur_time.tv_sec * 1000) + (cur_time.tv_usec / 1000);
-     } while ((tmp != 0) && ((cur_time_msec - start_time_msec) < MAX_POLL_CQ_TIMEOUT));
-     if (tmp)        
-     {
-         fprintf(stderr, "failed connect\n");
-         close(sockfd);
-         sockfd = -1;
-     }
- 
-     return sockfd;
- }
-
-static int
-sock_server_connect(const char *servername, int port)
-{
-    int rc, sockfd = -1;
-    struct sockaddr_un addr;
-    
-    sockfd = socket(AF_UNIX, SOCK_STREAM, 0); 
-    if (sockfd == -1) {
-        perror("socket error");
-        return sockfd;
-    }
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, servername, sizeof(addr.sun_path)-1);
-
-	rc = bind(sockfd, (struct sockaddr *) &addr, SUN_LEN(&addr));
-	if (rc != 0) {
-		fprintf(stderr, "could not bind JSON-RPC server\n");
-		close(sockfd);
-		return -1;
-	}
-
-	rc = listen(sockfd, 1);
-	if (rc < 0) {
-		fprintf(stderr, "listen() failed\n");
-		close(sockfd);
-		return -1;
-	}
-
-	return sockfd;
 }
 
 int verify(const float *C, const float *answer, uint64_t m, uint64_t n) {
@@ -472,8 +380,6 @@ int main(int argc, char *argv[]) {
     int hugepage_fd;
     char *hugepage_addr;
 
-    int server_sock;
-
     // RDMA
     struct resources res;
     struct config_t config = {
@@ -505,22 +411,6 @@ int main(int argc, char *argv[]) {
     
     /* print the used parameters for info*/
     print_config(config);
-
-
-    // printf("establish socket\n");
-    // server_sock = sock_server_connect("/var/tmp/spdk.sock", config.tcp_port);
-    // if (server_sock < 0) {
-    //     perror("sock connect");
-    //     exit(1);
-    // }
-
-    // printf("accept socket\n");
-    // res.sock = accept(server_sock, NULL, NULL);
-	// if (res.sock < 0) {
-	// 	fprintf(stderr, "accept() failed\n");
-	// 	close(server_sock);
-	// 	exit(1);
-    // }
     
     printf("mapping hugepage\n");
     hugepage_fd = open("/dev/hugepages/tensorstore", O_RDWR, 0755);
