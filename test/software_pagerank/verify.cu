@@ -26,7 +26,8 @@ struct fetch_conf {
     char *hugepage_addr;
     struct fifo *sending_queue;
     struct fifo *complete_queue;
-    struct timing_info *fetch_timing;
+    struct timing_info *row_fetch_timing;
+    struct timing_info *col_fetch_timing;
     struct timing_info *copy_in_timing;
 };
 
@@ -84,10 +85,10 @@ __global__ void pagerank_update(double* prev_pr, double* curr_pr, double *vertic
     }
 }
 
-int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length) {
+int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length, struct timing_info *fetch_timing) {
     struct response *res = NULL;
 
-    timing_info_push_start(conf->fetch_timing);
+    timing_info_push_start(fetch_timing);
     if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
         fprintf(stderr, "sync error before RDMA ops\n");
         return 1;
@@ -105,7 +106,7 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
     // }
     // printf("offset: %lu\n", res->offset);
 
-    timing_info_push_end(conf->fetch_timing);
+    timing_info_push_end(fetch_timing);
 
     timing_info_push_start(conf->copy_in_timing);
     cudaMemcpy(dst, src + res->offset, length, cudaMemcpyHostToDevice);
@@ -136,8 +137,8 @@ void *fetch_thread(void *args) {
             ptr_a = conf->outedges + dsize * (count % IO_QUEUE_SZ);
             ptr_b = conf->inedges + dsize * (count % IO_QUEUE_SZ);
 
-            cudaMemcpyFromMmap(conf, (char *) ptr_a, (char *) conf->hugepage_addr, dsize * sizeof(int64_t));
-            cudaMemcpyFromMmap(conf, (char *) ptr_b, (char *) conf->hugepage_addr, dsize * sizeof(int64_t));
+            cudaMemcpyFromMmap(conf, (char *) ptr_a, (char *) conf->hugepage_addr, dsize * sizeof(int64_t), conf->row_fetch_timing);
+            cudaMemcpyFromMmap(conf, (char *) ptr_b, (char *) conf->hugepage_addr, dsize * sizeof(int64_t), conf->col_fetch_timing);
             count++;
 
             entry->outedges = ptr_a;
@@ -165,7 +166,8 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
     struct fifo_entry *entry = NULL;
 
     struct timing_info *queue_timing;
-    struct timing_info *fetch_timing;
+    struct timing_info *row_fetch_timing;
+    struct timing_info *col_fetch_timing;
     struct timing_info *copy_in_timing;
     struct timing_info *pagerank_timing;
     struct timing_info *copy_out_timing;    
@@ -184,9 +186,15 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
         return -1;
     }
 
-    fetch_timing = timing_info_new(total_iteration * 2);
-    if (fetch_timing == NULL) {
-        printf("cannot create fetch_timing\n");
+    row_fetch_timing = timing_info_new(total_iteration);
+    if (row_fetch_timing == NULL) {
+        printf("cannot create row_fetch_timing\n");
+        return -1;
+    }
+
+    col_fetch_timing = timing_info_new(total_iteration);
+    if (col_fetch_timing == NULL) {
+        printf("cannot create col_fetch_timing\n");
         return -1;
     }
 
@@ -253,11 +261,13 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
     conf.hugepage_addr = res->buf;
     conf.sending_queue = sending_queue;
     conf.complete_queue = complete_queue;
-    conf.fetch_timing = fetch_timing;
+    conf.row_fetch_timing = row_fetch_timing;
+    conf.col_fetch_timing = col_fetch_timing;
     conf.copy_in_timing = copy_in_timing;
 
     timing_info_set_starting_time(queue_timing);
-    timing_info_set_starting_time(fetch_timing);
+    timing_info_set_starting_time(row_fetch_timing);
+    timing_info_set_starting_time(col_fetch_timing);
     timing_info_set_starting_time(copy_in_timing);
     timing_info_set_starting_time(pagerank_timing);
     timing_info_set_starting_time(copy_out_timing);
@@ -292,7 +302,8 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
 
-    printf("Fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
+    printf("Row fetch time: %f ms\n", (float) timing_info_duration(row_fetch_timing) / 1000);
+    printf("Col fetch time: %f ms\n", (float) timing_info_duration(col_fetch_timing) / 1000);
     printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
     printf("sending_queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);
     printf("GEMM time: %f ms\n", (float) timing_info_duration(pagerank_timing) / 1000);
@@ -300,13 +311,21 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
 
     struct timestamps *tss = NULL;
     FILE *fptr;
-    tss = timing_info_get_timestamps(fetch_timing);
-    fptr = fopen("fetch_ts.bin", "wb");
+    tss = timing_info_get_timestamps(row_fetch_timing);
+    fptr = fopen("row_fetch_ts.bin", "wb");
     fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
     fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
     fclose(fptr);
     timing_info_free_timestamps(tss);    
-    timing_info_free(fetch_timing);
+    timing_info_free(row_fetch_timing);
+
+    tss = timing_info_get_timestamps(col_fetch_timing);
+    fptr = fopen("col_fetch_ts.bin", "wb");
+    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
+    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
+    fclose(fptr);
+    timing_info_free_timestamps(tss);    
+    timing_info_free(col_fetch_timing);
 
     tss = timing_info_get_timestamps(copy_in_timing);
     fptr = fopen("copy_in_ts.bin", "wb");
