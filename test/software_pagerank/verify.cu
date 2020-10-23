@@ -130,9 +130,6 @@ void *fetch_thread(void *args) {
 
     for (i = 0; i < NITERS; i++) {
         for (st = 0; st < conf->m / conf->sub_m; st++) {
-            while (fifo_empty(conf->complete_queue)) {
-
-            }
             entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
             ptr_a = conf->outedges + dsize * (count % IO_QUEUE_SZ);
             ptr_b = conf->inedges + dsize * (count % IO_QUEUE_SZ);
@@ -280,9 +277,6 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
         for (st = 0; st < m / sub_m; st++) {
             printf("st: %lu\n", st * sub_m);
             timing_info_push_start(queue_timing);
-            while (fifo_empty(sending_queue)) {
-
-            }
             entry = (struct fifo_entry *) fifo_pop(sending_queue);
             timing_info_push_end(queue_timing);
             timing_info_push_start(pagerank_timing);
