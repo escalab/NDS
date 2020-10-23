@@ -35,10 +35,6 @@ struct fifo_entry {
 int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length) {
     struct response *res = NULL;
 
-    if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
-        fprintf(stderr, "sync error before RDMA ops\n");
-        return 1;
-    }
     res = sock_read_offset(conf->res->sock);
     if (res == NULL) {
         fprintf(stderr, "sync error before RDMA ops\n");
@@ -59,10 +55,6 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
         fprintf(stderr, "sync error before RDMA ops\n");
         return 1;
     }
-    if (sock_read_data(conf->res->sock)) { /* just send a dummy char back and forth */
-        fprintf(stderr, "sync error before RDMA ops\n");
-        return 1;
-    }
     return 0;
 }
 
@@ -76,9 +68,9 @@ void *fetch_thread(void *args) {
 
     for (i = 0; i < NITERS; i++) {
         for (st = 0; st < conf->m / conf->sub_m; st++) {
-            while (fifo_empty(conf->complete_queue)) {
+            // while (fifo_empty(conf->complete_queue)) {
 
-            }
+            // }
             entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
             ptr_a = conf->row_stripe + dsize * (count % IO_QUEUE_SZ);
 
@@ -155,15 +147,15 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m, int64_t *ans
     for (i = 0; i < NITERS; i++) {
         printf("iter: %lu\n", i);
         for (st = 0; st < m / sub_m; st++) {
-            printf("st: %lu\n", st * sub_m);
-            while (fifo_empty(sending_queue)) {
+            printf("st: %lu, ", st * sub_m);
+            // while (fifo_empty(sending_queue)) {
 
-            }
+            // }
             entry = (struct fifo_entry *) fifo_pop(sending_queue);
             error += row_verify(entry->row_stripe, answer, st * sub_m, m, sub_m);
             fifo_push(complete_queue, entry);
+            printf("row_error: %lu\n", error);
         }
-        printf("row_error: %lu\n", error);
     }
 
     pthread_join(thread_id, NULL); 
