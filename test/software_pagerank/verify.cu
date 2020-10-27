@@ -95,10 +95,6 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
     struct response *res = NULL;
 
     timing_info_push_start(fetch_timing);
-    if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
-        fprintf(stderr, "sync error before RDMA ops\n");
-        return 1;
-    }
     res = sock_read_offset(conf->res->sock);
     if (res == NULL) {
         fprintf(stderr, "sync error before RDMA ops\n");
@@ -119,10 +115,10 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
     timing_info_push_end(conf->copy_in_timing);
 
     free(res);
-    // if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
-    //     fprintf(stderr, "sync error before RDMA ops\n");
-    //     return 1;
-    // }
+    if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
+        fprintf(stderr, "sync error before RDMA ops\n");
+        return 1;
+    }
     return 0;
 }
 
