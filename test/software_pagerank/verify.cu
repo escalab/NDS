@@ -31,6 +31,12 @@ struct fetch_conf {
     struct timing_info *copy_in_timing;
 };
 
+struct request_conf {
+    struct resources *res;
+    uint64_t id;
+    uint64_t sub_m;
+};
+
 struct fifo_entry {
     int64_t *outedges, *inedges;
 };
@@ -146,7 +152,25 @@ void *fetch_thread(void *args) {
     return NULL;
 }
 
-int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
+void *request_thread(void *args) {
+    struct request_conf *conf = (struct request_conf *) args;
+    uint64_t i, st;
+
+    for (i = 0; i < NITERS; i++) {
+        for (st = 0; st < M / SUB_M; st++) {
+            sock_write_request(conf->res->req_sock, conf->id, st, st+1, SUB_M, 2, 0);
+            sock_read_data(conf->res->req_sock);
+
+            sock_write_request(conf->res->req_sock, conf->id, st, st+1, SUB_M, 3, 1);
+            sock_read_data(conf->res->req_sock);
+        }
+    }
+    sock_write_request(conf->res->req_sock, -1, st, st+1, SUB_M, 0, 0);
+    sock_read_data(conf->res->req_sock);
+    return NULL;
+}
+
+int nds_pagerank(struct resources *res, uint64_t id, uint64_t m, uint64_t sub_m) {
     size_t i, st;    
     int64_t *outedges, *inedges;
 
@@ -169,8 +193,11 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
     struct timing_info *pagerank_timing;
     struct timing_info *copy_out_timing;    
     
-    pthread_t thread_id; 
-    struct fetch_conf conf;
+    pthread_t f_thread_id; 
+    struct fetch_conf f_conf;
+
+    pthread_t r_thread_id; 
+    struct request_conf r_conf;
 
     struct timeval h_start, h_end;
     long duration;
@@ -249,18 +276,23 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
     cudaMemset(curr_pr_d, 0, sizeof(double) * m);
     memset(vertices, 0, sizeof(double) * m);
 
+    r_conf.res = res;
+    r_conf.id = id;
+    r_conf.sub_m = SUB_M;
+    pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
+
     // create thread here
-    conf.res = res;
-    conf.m = m;
-    conf.sub_m = sub_m;
-    conf.outedges = outedges;
-    conf.inedges = inedges;
-    conf.hugepage_addr = res->buf;
-    conf.sending_queue = sending_queue;
-    conf.complete_queue = complete_queue;
-    conf.row_fetch_timing = row_fetch_timing;
-    conf.col_fetch_timing = col_fetch_timing;
-    conf.copy_in_timing = copy_in_timing;
+    f_conf.res = res;
+    f_conf.m = m;
+    f_conf.sub_m = sub_m;
+    f_conf.outedges = outedges;
+    f_conf.inedges = inedges;
+    f_conf.hugepage_addr = res->buf;
+    f_conf.sending_queue = sending_queue;
+    f_conf.complete_queue = complete_queue;
+    f_conf.row_fetch_timing = row_fetch_timing;
+    f_conf.col_fetch_timing = col_fetch_timing;
+    f_conf.copy_in_timing = copy_in_timing;
 
     timing_info_set_starting_time(queue_timing);
     timing_info_set_starting_time(row_fetch_timing);
@@ -268,9 +300,9 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
     timing_info_set_starting_time(copy_in_timing);
     timing_info_set_starting_time(pagerank_timing);
     timing_info_set_starting_time(copy_out_timing);
+	pthread_create(&f_thread_id, NULL, fetch_thread, &f_conf); 
 
     gettimeofday(&h_start, NULL);
-	pthread_create(&thread_id, NULL, fetch_thread, &conf); 
     // blockGEMM
     for (i = 0; i < NITERS; i++) {
         printf("iter: %lu\n", i);
@@ -291,7 +323,6 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
     }
     cudaMemcpy(vertices, vertices_d, sizeof(double) * m, cudaMemcpyDeviceToHost);
 
-    pthread_join(thread_id, NULL); 
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
@@ -302,6 +333,9 @@ int nds_pagerank(struct resources *res, uint64_t m, uint64_t sub_m) {
     printf("sending_queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);
     printf("GEMM time: %f ms\n", (float) timing_info_duration(pagerank_timing) / 1000);
     printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
+    
+    pthread_join(r_thread_id, NULL); 
+    pthread_join(f_thread_id, NULL); 
 
     struct timestamps *tss = NULL;
     FILE *fptr;
@@ -400,7 +434,7 @@ void print_config(struct config_t config) {
 
 int main(int argc, char *argv[]) {
     int rc = 0;
-    uint64_t n, sub_n;
+    uint64_t matrix_id, n, sub_n;
 
     int hugepage_fd;
     char *hugepage_addr;
@@ -416,14 +450,14 @@ int main(int argc, char *argv[]) {
     };
 
     // default the iteration is 4 times
-    if (argc < 4) {
-        printf("usage: %s <# of vertices> <# of subvertices> <port>\n", argv[0]);
+    if (argc < 5) {
+        printf("usage: %s <matrix_id> <# of vertices> <# of subvertices> <port>\n", argv[0]);
         exit(1);
     } 
-
-    n = (uint64_t) atoll(argv[1]);
-    sub_n = (uint64_t) atoll(argv[2]);
-    config.tcp_port = atoi(argv[3]);
+    matrix_id = (uint64_t) atoll(argv[1]);
+    n = (uint64_t) atoll(argv[2]);
+    sub_n = (uint64_t) atoll(argv[3]);
+    config.tcp_port = atoi(argv[4]);
 
     /* print the used parameters for info*/
     print_config(config);
@@ -446,16 +480,17 @@ int main(int argc, char *argv[]) {
 
     printf("hugepage starting address is: %p\n", hugepage_addr);
     printf("socket connection\n");
-    rc = make_tcp_connection(&res, &config);
+    rc = make_two_tcp_connection(&res, &config);
     if (rc < 0) {
         perror("sock connect");
         exit(1);
     }
 
     printf("calculating the result of pagerank\n");
-    rc = nds_pagerank(&res, n, sub_n);
+    rc = nds_pagerank(&res, matrix_id, n, sub_n);
     
     close(res.sock);
+    close(res.req_sock);
     munmap(hugepage_addr, BUF_SIZE);
     close(hugepage_fd);
     return rc;
