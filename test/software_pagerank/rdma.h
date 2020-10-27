@@ -83,10 +83,16 @@ struct resources {
                                      ops */
   uint64_t size;
   int sock;                          /* TCP socket file descriptor */
+  int req_sock;
 };
 
 struct response {
   uint64_t id, x, y, offset;
+};
+
+struct request {
+  int id; 
+  uint64_t x, y, sub_m, op, req_id;
 };
 
 void config_destroy(struct config_t *config);
@@ -95,12 +101,15 @@ void resources_init(struct resources *res);
 int resources_find_device(struct resources *res, struct config_t *config);
 int resources_create(struct resources *res, struct config_t *config);
 int make_tcp_connection(struct resources *res, struct config_t *config);
+int make_two_tcp_connection(struct resources *res, struct config_t *config);
 int connect_qp(struct resources *res, struct config_t *config);
 int sock_sync_data(int sock, int xfer_size, char *local_data, char *remote_data);
 int sock_write_data(int sock);
 int sock_read_data(int sock);
 int sock_write_response(int sock, uint64_t id, uint64_t x, uint64_t y, uint64_t offset);
 struct response *sock_read_offset(int sock);
+struct request *sock_read_request(int sock);
+int sock_write_request(int sock, int id, uint64_t x, uint64_t y, uint64_t sub_m, uint64_t op, uint64_t req_id);
 int poll_completion(struct resources *res, uint64_t num_entries);
 int post_send(struct resources *res, int opcode, char *spdk_ptr, uint64_t remote_offset, uint32_t length);
 int post_send_multi_sr(struct resources *res, int opcode, char *spdk_ptr, uint64_t remote_offset, uint64_t rows, uint64_t remote_row_size, uint32_t length);

@@ -127,6 +127,52 @@ int make_tcp_connection(struct resources *res, struct config_t *config) {
     return rc;
 }
 
+int make_two_tcp_connection(struct resources *res, struct config_t *config) {
+    int rc = 0;
+    /* if client side */
+    if (config->server_name) {
+        res->sock = sock_connect(config->server_name, config->tcp_port);
+        if (res->sock < 0) {
+            fprintf(stderr,
+                    "failed to establish TCP connection to server %s, port %d\n",
+                    config->server_name, config->tcp_port);
+            rc = -1;
+        }
+        res->req_sock = sock_connect(config->server_name, config->tcp_port+1);
+        if (res->req_sock < 0) {
+            fprintf(stderr,
+                    "failed to establish TCP connection to server %s, port %d\n",
+                    config->server_name, config->tcp_port+1);
+            rc = -1;
+        }
+    }
+        // if server side
+    else {
+#if VERBOSE==1
+        fprintf(stdout, "waiting on port %d for TCP connection\n",
+                config->tcp_port);
+#endif
+        res->sock = sock_connect(NULL, config->tcp_port);
+        if (res->sock < 0) {
+            fprintf(stderr,
+                    "failed to establish TCP connection with client on port %d\n",
+                    config->tcp_port);
+            rc = -1;
+        }
+        res->req_sock = sock_connect(NULL, config->tcp_port+1);
+        if (res->req_sock < 0) {
+            fprintf(stderr,
+                    "failed to establish TCP connection with client on port %d\n",
+                    config->tcp_port+1);
+            rc = -1;
+        }
+    }
+#if VERBOSE==1
+    fprintf(stdout, "TCP connection was established\n");
+#endif
+    return rc;
+}
+
 /******************************************************************************
  * Function: sock_sync_data
  *
@@ -230,4 +276,40 @@ struct response *sock_read_offset(int sock) {
         }
     }
     return res;
+}
+
+int sock_write_request(int sock, int id, uint64_t x, uint64_t y, uint64_t sub_m, uint64_t op, uint64_t req_id) {
+    int rc = 0;
+    struct request req;
+    req.id = id;
+    req.x = x;
+    req.y = y;
+    req.sub_m = sub_m;
+    req.op = op;
+    req.req_id = req_id;
+
+    rc = write(sock, &req, sizeof(struct request));
+    if (rc < (int) sizeof(struct request))
+        fprintf(stderr, "Failed writing data during sock_sync_data\n");
+    else
+        rc = 0;
+    return rc;
+}
+
+struct request *sock_read_request(int sock) {
+    int rc = 0;
+    int read_bytes = 0;
+    int total_read_bytes = 0;
+    struct request *req = calloc(1, sizeof(struct request));
+    while (!rc && total_read_bytes < (int) sizeof(struct request)) {
+        read_bytes = read(sock, req, sizeof(struct request));
+        if (read_bytes > 0) {
+            total_read_bytes += read_bytes;
+        }
+        else {
+            free(req);
+            req = NULL;
+        }
+    }
+    return req;
 }
