@@ -9,6 +9,7 @@ extern "C" {
 #define MAX_THREAD 1024
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
+#define M 32768UL
 #define SUB_M 8192UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
@@ -20,9 +21,16 @@ struct fetch_conf {
     uint64_t m, sub_m;
     double *a_sub_d, *b_sub_d;
     char *hugepage_addr;
-    struct fifo *queue;
+    struct fifo *sending_queue;
+    struct fifo *complete_queue;
     struct timing_info *fetch_timing;
     struct timing_info *copy_in_timing;
+};
+
+struct request_conf {
+    struct resources *res;
+    uint64_t id;
+    uint64_t m, sub_m;
 };
 
 struct fifo_entry {
@@ -75,10 +83,6 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
     struct response *res = NULL;
 
     timing_info_push_start(conf->fetch_timing);
-    if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
-        fprintf(stderr, "sync error before RDMA ops\n");
-        return 1;
-    }
     res = sock_read_offset(conf->res->sock);
     if (res == NULL) {
         fprintf(stderr, "sync error before RDMA ops\n");
@@ -97,6 +101,10 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
     timing_info_push_end(conf->copy_in_timing);
 
     free(res);
+    if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
+        fprintf(stderr, "sync error before RDMA ops\n");
+        return 1;
+    }
     // if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
     //     fprintf(stderr, "sync error before RDMA ops\n");
     //     return 1;
@@ -115,9 +123,7 @@ void *fetch_thread(void *args) {
     for (i = 0; i < conf->m / conf->sub_m; i++) {
         for (j = 0; j < conf->m / conf->sub_m; j++) {
             for (k = 0; k < conf->m / conf->sub_m; k++) {
-                while (fifo_full(conf->queue)) {
-
-                }
+                entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
                 ptr_a = conf->a_sub_d + dsize * (count % IO_QUEUE_SZ);
                 ptr_b = conf->b_sub_d + dsize * (count % IO_QUEUE_SZ);
 
@@ -125,17 +131,36 @@ void *fetch_thread(void *args) {
                 cudaMemcpyFromMmap(conf, (char *) ptr_b, (char *) conf->hugepage_addr, dsize * sizeof(double));
                 count++;
 
-                entry = (struct fifo_entry *) malloc(sizeof(struct fifo_entry));
                 entry->a_sub_d = ptr_a;
                 entry->b_sub_d = ptr_b;
-                fifo_push(conf->queue, entry);
+                fifo_push(conf->sending_queue, entry);
             }
         }
     }
     return NULL;
 }
 
-int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t sub_m, float *c) {
+void *request_thread(void *args) {
+    struct request_conf *conf = (struct request_conf *) args;
+    uint64_t i, j, k;
+    for (i = 0; i < conf->m / conf->sub_m; i++) {
+        for (j = 0; j < conf->m / conf->sub_m; j++) {
+            for (k = 0; k < conf->m / conf->sub_m; k++) {
+                sock_write_request(conf->res->req_sock, conf->id, k, i, SUB_M, 1, 0);
+                sock_read_data(conf->res->req_sock);
+    
+                sock_write_request(conf->res->req_sock, conf->id, j, k, SUB_M, 1, 1);
+                sock_read_data(conf->res->req_sock);
+            }
+        }
+    }
+
+    sock_write_request(conf->res->req_sock, -1, k, i, SUB_M, 1, 0);
+    sock_read_data(conf->res->req_sock);
+    return NULL;
+}
+
+int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t id, uint64_t m, uint64_t sub_m, float *c) {
     size_t i, j, k;
     size_t cross_row = m * sub_m, cross_col = sub_m * sub_m;
     double *a_sub_d, *b_sub_d;
@@ -148,7 +173,11 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
     size_t dsize;
     cublasHandle_t handle;
 
-    struct fifo *queue;
+    struct fifo *sending_queue;
+    struct fifo *complete_queue; 
+    struct fifo_entry *entries = (struct fifo_entry *) calloc(IO_QUEUE_SZ, sizeof(struct fifo_entry));
+    struct fifo_entry *entry = NULL;
+
     struct timing_info *queue_timing;
     struct timing_info *fetch_timing;
     struct timing_info *copy_in_timing;
@@ -156,8 +185,11 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
     struct timing_info *gemm_timing;
     struct timing_info *copy_out_timing;    
     
-    pthread_t thread_id; 
-    struct fetch_conf conf;
+    pthread_t f_thread_id; 
+    struct fetch_conf f_conf;
+
+    pthread_t r_thread_id; 
+    struct request_conf r_conf;
 
     struct timeval h_start, h_end;
     long duration;
@@ -204,11 +236,21 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
     }
 
     // it causes problem if size == 1
-    queue = fifo_new(IO_QUEUE_SZ * 2);
-	if (queue == NULL) {
-        printf("cannot create queue\n");
+    sending_queue = fifo_new(IO_QUEUE_SZ * 2);
+	if (sending_queue == NULL) {
+        printf("cannot create sending_queue\n");
         return -1;
-	}
+    }
+    
+    complete_queue = fifo_new(IO_QUEUE_SZ * 2);
+	if (complete_queue == NULL) {
+        printf("cannot create complete_queue\n");
+        return -1;
+    }
+    
+    for (i = 0; i < IO_QUEUE_SZ; i++) {
+        fifo_push(complete_queue, entries + i);
+    }
 
     // cuda malloc
     dsize = sub_m * sub_m;
@@ -218,16 +260,23 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
     cudaMalloc((void **) &b_sub_h, sizeof(half) * dsize);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * dsize);
 
+    r_conf.res = res;
+    r_conf.id = id;
+    r_conf.m = M;
+    r_conf.sub_m = SUB_M;
+    pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
+
     // create thread here
-    conf.res = res;
-    conf.m = m;
-    conf.sub_m = sub_m;
-    conf.a_sub_d = a_sub_d;
-    conf.b_sub_d = b_sub_d;
-    conf.hugepage_addr = res->buf;
-    conf.queue = queue;
-    conf.fetch_timing = fetch_timing;
-    conf.copy_in_timing = copy_in_timing;
+    f_conf.res = res;
+    f_conf.m = m;
+    f_conf.sub_m = sub_m;
+    f_conf.a_sub_d = a_sub_d;
+    f_conf.b_sub_d = b_sub_d;
+    f_conf.hugepage_addr = res->buf;
+    f_conf.sending_queue = sending_queue;
+    f_conf.complete_queue = complete_queue;
+    f_conf.fetch_timing = fetch_timing;
+    f_conf.copy_in_timing = copy_in_timing;
 
     timing_info_set_starting_time(queue_timing);
     timing_info_set_starting_time(fetch_timing);
@@ -235,26 +284,22 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
     timing_info_set_starting_time(d2h_timing);
     timing_info_set_starting_time(gemm_timing);
     timing_info_set_starting_time(copy_out_timing);
+	pthread_create(&f_thread_id, NULL, fetch_thread, &f_conf); 
 
     gettimeofday(&h_start, NULL);
-	pthread_create(&thread_id, NULL, fetch_thread, &conf); 
-    struct fifo_entry *entry = NULL;
     // blockGEMM
     for (i = 0; i < m / sub_m; i++) {
         for (j = 0; j < m / sub_m; j++) {
             cudaMemset(c_sub_f, 0, sub_m * sub_m * sizeof(float));
             for (k = 0; k < m / sub_m; k++) {
                 timing_info_push_start(queue_timing);
-                while (fifo_empty(queue)) {
-
-                }
-                entry = (struct fifo_entry *) fifo_pop(queue);
+                entry = (struct fifo_entry *) fifo_pop(sending_queue);
                 timing_info_push_end(queue_timing);
 
                 timing_info_push_start(d2h_timing);
                 d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(entry->a_sub_d, a_sub_h, dsize);
                 d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(entry->b_sub_d, b_sub_h, dsize);
-                free(entry);
+                fifo_push(complete_queue, entry);
                 timing_info_push_end(d2h_timing);
 
                 // gemm
@@ -268,8 +313,6 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
             timing_info_push_end(copy_out_timing);
         }
     }
-    pthread_join(thread_id, NULL); 
-
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
@@ -280,6 +323,9 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
     printf("d2h time: %f ms\n", (float) timing_info_duration(d2h_timing) / 1000);
     printf("GEMM time: %f ms\n", (float) timing_info_duration(gemm_timing) / 1000);
     printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
+
+    pthread_join(r_thread_id, NULL); 
+    pthread_join(f_thread_id, NULL); 
 
     struct timestamps *tss = NULL;
     FILE *fptr;
@@ -337,7 +383,9 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t m, uint64_t
     cudaFree(a_sub_h);
     cudaFree(b_sub_h);
     cudaFree(c_sub_f);
-    fifo_free(queue);
+    fifo_free(sending_queue);
+    fifo_free(complete_queue);
+    free(entries);    
     return 0;
 }
 
@@ -375,7 +423,7 @@ int main(int argc, char *argv[]) {
     float *c, *answer_c;
     struct timeval h_start, h_end;
     long duration;
-    uint64_t n, sub_n;
+    uint64_t matrix_id, n, sub_n;
 
     int hugepage_fd;
     double *hugepage_addr;
@@ -390,17 +438,17 @@ int main(int argc, char *argv[]) {
         0     /* gid_idx */
     };
 
-    if (argc < 5) {
-        printf("usage: %s <n> <sub_n> <validated matrix> <port>\n", argv[0]);
+    if (argc < 6) {
+        printf("usage: %s <matrix_id> <n> <sub_n> <validated matrix> <port>\n", argv[0]);
         exit(1);
     }
+    matrix_id = (uint64_t) atoll(argv[1]);
+    n = (uint64_t) atoll(argv[2]);
+    sub_n = (uint64_t) atoll(argv[3]);
+    a_fd = open(argv[4], O_RDONLY);
+    b_fd = open(argv[4], O_RDONLY);
 
-    n = (uint64_t) atoll(argv[1]);
-    sub_n = (uint64_t) atoll(argv[2]);
-    a_fd = open(argv[3], O_RDONLY);
-    b_fd = open(argv[3], O_RDONLY);
-
-    config.tcp_port = atoi(argv[4]);
+    config.tcp_port = atoi(argv[5]);
 
     a = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, a_fd, 0);
     b = (double *) mmap(NULL, sizeof(double) * n * n, PROT_READ, MAP_PRIVATE, b_fd, 0);
@@ -412,8 +460,6 @@ int main(int argc, char *argv[]) {
     /* print the used parameters for info*/
     print_config(config);
     resources_init(&res);
-
-    make_tcp_connection(&res, &config);
 
     hugepage_fd = open("/dev/hugepages/tensorstore", O_RDWR, 0755);
     if (hugepage_fd < 0) {
@@ -433,6 +479,12 @@ int main(int argc, char *argv[]) {
 
     printf("hugepage starting address is: %p\n", hugepage_addr);
     res.buf = (char *) hugepage_addr;
+
+    rc = make_two_tcp_connection(&res, &config);
+    if (rc < 0) {
+        perror("sock connect");
+        exit(1);
+    }
 
     // use the first res to find the device.
     if (resources_find_device(&res, &config)) {
@@ -454,7 +506,7 @@ int main(int argc, char *argv[]) {
     fprintf(stdout, "running server\n");
 
     printf("calculating the result of SPDK GEMM\n");
-    rc = spdk_nds_blockSgemm_half_pthread(&res, n, sub_n, c);
+    rc = spdk_nds_blockSgemm_half_pthread(&res, matrix_id, n, sub_n, c);
 
     // config_destroy(&config);
 
@@ -467,11 +519,14 @@ int main(int argc, char *argv[]) {
     printf("Answer GEMM duration: %f ms\n", (float) duration / 1000);    
 
     rc = verify(c, answer_c, n, n);
-
+    // for (uint64_t i = 0; i < 16; i++) {
+    //     printf("%f %f\n", c[i], answer_c[i]);
+    // }
     if (resources_destroy(&res)) {
         fprintf(stderr, "failed to destroy resources\n");
         exit(1);
     }
+    close(res.req_sock);
 
     munmap(hugepage_addr, BUF_SIZE);
     munmap(a, sizeof(double) * n * n);
