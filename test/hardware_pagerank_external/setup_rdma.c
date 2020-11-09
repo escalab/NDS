@@ -75,7 +75,7 @@ int modify_qp_to_rtr(struct ibv_qp *qp, uint32_t remote_qpn, uint16_t dlid,
     attr.path_mtu = IBV_MTU_4096;
     attr.dest_qp_num = remote_qpn;
     attr.rq_psn = 0;
-    attr.max_dest_rd_atomic = 1;
+    attr.max_dest_rd_atomic = 16;
     attr.min_rnr_timer = 0x12;
     attr.ah_attr.is_global = 0;
     attr.ah_attr.dlid = dlid;
@@ -124,7 +124,7 @@ int modify_qp_to_rts(struct ibv_qp *qp) {
     attr.retry_cnt = 6;
     attr.rnr_retry = 0;
     attr.sq_psn = 0;
-    attr.max_rd_atomic = 1;
+    attr.max_rd_atomic = 16;
     flags = IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT |
         IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC;
     rc = ibv_modify_qp(qp, &attr, flags);
