@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <math.h>
 #include <cuda.h>
-#include <cublas.h>
+#include "cublas_v2.h"
 
 // for mmap
 #include <sys/mman.h>
@@ -22,11 +22,11 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 2048UL
+#define SUB_M 1024UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-#define IO_QUEUE_SZ 2UL
+#define IO_QUEUE_SZ 4UL
 
 void print_config(struct config_t config);
 
@@ -277,7 +277,10 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
     }
 
     // Initialize CUBLAS
-    cublasInit();
+    cublasStatus_t stat;
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+    cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
 
     // Allocate global memory
     double *ref_dev, *query_dev, *dist_dev, *ref_norm_dev, *query_norm_dev;
@@ -297,7 +300,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         cudaFree(index_dev);
         cudaFree(ref_norm_dev);
         cudaFree(query_norm_dev);
-        cublasShutdown();
+        cublasDestroy(handle);
         return -1;
     }
 
@@ -316,7 +319,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         cudaFree(index_dev);
         cudaFree(ref_norm_dev);
         cudaFree(query_norm_dev);
-        cublasShutdown();
+        cublasDestroy(handle);
         return -1; 
     }
 
@@ -426,7 +429,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         cudaFree(index_dev);
         cudaFree(ref_norm_dev);
         cudaFree(query_norm_dev);
-        cublasShutdown();
+        cublasDestroy(handle);
         return -1; 
     }
 
@@ -440,12 +443,14 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         cudaFree(index_dev);
         cudaFree(ref_norm_dev);
         cudaFree(query_norm_dev);
-        cublasShutdown();
+        cublasDestroy(handle);
         return -1;
     }
+
+    double alpha = -2.0, beta = 0.0;
     // blockGEMM
     for (i = 0; i < ref_nb; i+=SUB_M) {
-        printf("i: %lu\n", i);
+        // printf("i: %lu\n", i);
         timing_info_push_start(queue_timing);
         entry = (struct fifo_entry *) fifo_pop(sending_queue);
         timing_info_push_end(queue_timing);
@@ -461,12 +466,12 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
             cudaFree(index_dev);
             cudaFree(ref_norm_dev);
             cudaFree(query_norm_dev);
-            cublasShutdown();
+            cublasDestroy(handle);
             return -1;
         }
         // Computation of query*transpose(reference)
-        cublasDgemm('n', 't', query_pitch, ref_pitch, ref_nb, (double)-2.0, query_dev, query_pitch, entry->ref_dev, ref_pitch, (double)0.0, dist_dev + i*query_nb, query_pitch);
-        if (cublasGetError() != CUBLAS_STATUS_SUCCESS) {
+        stat = cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_T, query_pitch, ref_pitch, dim, &alpha, query_dev, query_pitch, entry->ref_dev, ref_pitch, &beta, dist_dev + i*query_nb, query_pitch);
+        if (stat != CUBLAS_STATUS_SUCCESS) {
             printf("ERROR: Unable to execute cublasSgemm\n");
             cudaFree(ref_dev);
             cudaFree(query_dev);
@@ -474,10 +479,9 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
             cudaFree(index_dev);
             cudaFree(ref_norm_dev);
             cudaFree(query_norm_dev);
-            cublasShutdown();
+            cublasDestroy(handle);
             return -1;       
         }
-        fifo_push(complete_queue, entry);
 
         // Add reference points norm
         dim3 block2(BLOCK_DIM, BLOCK_DIM, 1);
@@ -491,9 +495,10 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
             cudaFree(index_dev);
             cudaFree(ref_norm_dev);
             cudaFree(query_norm_dev);
-            cublasShutdown();
+            cublasDestroy(handle);
             return -1;
         }
+        fifo_push(complete_queue, entry);
         timing_info_push_end(kernel_timing);
     }
 
@@ -507,7 +512,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         cudaFree(index_dev);
         cudaFree(ref_norm_dev);
         cudaFree(query_norm_dev);
-        cublasShutdown();
+        cublasDestroy(handle);
         return -1;
     }
 
@@ -523,7 +528,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         cudaFree(index_dev);
         cudaFree(ref_norm_dev);
         cudaFree(query_norm_dev);
-        cublasShutdown();
+        cublasDestroy(handle);
         return -1;
     }
 
@@ -539,7 +544,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         cudaFree(index_dev);
         cudaFree(ref_norm_dev);
         cudaFree(query_norm_dev);
-        cublasShutdown();
+        cublasDestroy(handle);
         return -1; 
     }
     timing_info_push_end(copy_out_timing);
@@ -616,7 +621,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
     cudaFree(index_dev);
     cudaFree(ref_norm_dev);
     cudaFree(query_norm_dev);
-    cublasShutdown();
+    cublasDestroy(handle);
     return 0;
 }
 

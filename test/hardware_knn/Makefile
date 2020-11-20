@@ -1,8 +1,8 @@
 NVCC = nvcc
 CFLAGS = -O3 -Wno-deprecated-gpu-targets
-# LD_FLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static -libverbs
+LD_FLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -lculibos -lcudart_static -lpthread -ldl -lcublasLt_static -libverbs
 # LD_FLAGS += -I../../lib/gemm -L../../lib/gemm -lcublasGEMM 
-LD_FLAGS = -lcuda -lcublas -lcudart -libverbs -lpthread -ldl
+# LD_FLAGS = -lcuda -lcublas -lcudart  -lpthread -ldl
 LD_FLAGS += -L../../lib/timing/ -I../../lib/timing/ -ltiming
 
 TARGET=knn
