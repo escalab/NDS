@@ -22,11 +22,11 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 1024UL
+#define SUB_M 4096UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-#define IO_QUEUE_SZ 4UL
+#define IO_QUEUE_SZ 1UL
 
 void print_config(struct config_t config);
 
@@ -417,7 +417,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
 
     gettimeofday(&h_start, NULL);
     pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
-    pthread_create(&f_thread_id, NULL, fetch_thread, &f_conf); 
+    // pthread_create(&f_thread_id, NULL, fetch_thread, &f_conf); 
 
     // Copy reference and query data from the host to the device
     err1 = cudaMemcpy(query_dev, query, query_nb * sizeof(double) * dim, cudaMemcpyHostToDevice);
@@ -448,16 +448,25 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
     }
 
     double alpha = -2.0, beta = 0.0;
+    double *ptr_a;
+    uint64_t dsize = M * SUB_M;
+    uint64_t count = 0;
     // blockGEMM
     for (i = 0; i < ref_nb; i+=SUB_M) {
         // printf("i: %lu\n", i);
         timing_info_push_start(queue_timing);
-        entry = (struct fifo_entry *) fifo_pop(sending_queue);
+        ptr_a = ref_dev + dsize * (count % IO_QUEUE_SZ);
+
+        cudaMemcpyFromMmap(&f_conf, (char *) ptr_a, (char *) res->buf, dsize * sizeof(double), col_fetch_timing);
+        count++;
+
+        // ptr_a = ptr_a;
+        // entry = (struct fifo_entry *) fifo_pop(sending_queue);
         timing_info_push_end(queue_timing);
 
         timing_info_push_start(kernel_timing);
         // Compute the squared norm of the reference points
-        compute_squared_norm<<<(SUB_M+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(entry->ref_dev, SUB_M, ref_pitch, dim, ref_norm_dev);
+        compute_squared_norm<<<(SUB_M+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(ptr_a, SUB_M, ref_pitch, dim, ref_norm_dev);
         if (cudaGetLastError() != cudaSuccess) {
             printf("ERROR: Unable to execute kernel\n");
             cudaFree(ref_dev);
@@ -470,7 +479,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
             return -1;
         }
         // Computation of query*transpose(reference)
-        stat = cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_T, query_pitch, ref_pitch, dim, &alpha, query_dev, query_pitch, entry->ref_dev, ref_pitch, &beta, dist_dev + i*query_nb, query_pitch);
+        stat = cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_T, query_pitch, ref_pitch, dim, &alpha, query_dev, query_pitch, ptr_a, ref_pitch, &beta, dist_dev + i*query_nb, query_pitch);
         if (stat != CUBLAS_STATUS_SUCCESS) {
             printf("ERROR: Unable to execute cublasSgemm\n");
             cudaFree(ref_dev);
@@ -498,7 +507,8 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
             cublasDestroy(handle);
             return -1;
         }
-        fifo_push(complete_queue, entry);
+        // fifo_push(complete_queue, entry);
+        cudaDeviceSynchronize();
         timing_info_push_end(kernel_timing);
     }
 
@@ -550,7 +560,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
     timing_info_push_end(copy_out_timing);
 
     pthread_join(r_thread_id, NULL); 
-    pthread_join(f_thread_id, NULL); 
+    // pthread_join(f_thread_id, NULL); 
 
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
