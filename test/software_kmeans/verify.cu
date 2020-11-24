@@ -25,8 +25,8 @@ extern "C" {
 #define SUB_M 1024UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
-#define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-// #define IO_QUEUE_SZ 4UL
+// #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
+#define IO_QUEUE_SZ 1UL
 
 #define msg(format, ...) do { fprintf(stderr, format, ##__VA_ARGS__); } while (0)
 #define err(format, ...) do { fprintf(stderr, format, ##__VA_ARGS__); exit(1); } while (0)
@@ -225,6 +225,39 @@ void compute_delta(int *deviceIntermediates,
     }
 }
 
+/*---< file_write() >---------------------------------------------------------*/
+int file_write(uint64_t        numClusters,  /* no. clusters */
+    uint64_t        numObjs,      /* no. data objects */
+    uint64_t        numCoords,    /* no. coordinates (local) */
+    double    **clusters,     /* [numClusters][numCoords] centers */
+    int       *membership)   /* [numObjs] */
+{
+    FILE *fptr;
+    int   i, j;
+
+    /* output: the coordinates of the cluster centres ----------------------*/
+    printf("Writing coordinates of K=%lu cluster centers to file \"%s\"\n", numClusters, "cluster_centres");
+    fptr = fopen("cluster_centres", "w");
+    for (i=0; i<numClusters; i++) {
+        fprintf(fptr, "%d ", i);
+        for (j=0; j<numCoords; j++) {
+            fprintf(fptr, "%f ", clusters[i][j]);
+        }
+        fprintf(fptr, "\n");
+    }
+    fclose(fptr);
+
+    /* output: the closest cluster centre to each of the data points --------*/
+    printf("Writing membership of N=%lu data objects to file \"%s\"\n", numObjs, "membership");
+    fptr = fopen("membership", "w");
+    for (i=0; i<numObjs; i++) {
+        fprintf(fptr, "%d %d\n", i, membership[i]);
+    }
+    fclose(fptr);
+
+    return 0;
+}
+
 int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length, struct timing_info *fetch_timing) {
     struct response *res = NULL;
 
@@ -304,7 +337,7 @@ double** nds_kmeans_block(struct resources *res, uint64_t id, uint64_t numCoords
     int *deviceIntermediates;
     
     struct response *response = NULL;
-
+    double *buf;
     /* pick first numClusters elements of objects[] as initial cluster centers*/
     malloc2D(clusters, numClusters, numCoords, double);
     malloc2D(dimClusters, numCoords, numClusters, double);
@@ -317,10 +350,10 @@ double** nds_kmeans_block(struct resources *res, uint64_t id, uint64_t numCoords
         fprintf(stderr, "sync error before RDMA ops\n");
         return clusters;
     }
-
+    buf = (double *) (res->buf + response->offset);
     for (i = 0; i < numCoords; i++) {
         for (j = 0; j < numClusters; j++) {
-            dimClusters[i][j] = res->buf[i * SUB_M + j];
+            dimClusters[i][j] = buf[i * SUB_M + j];
         }
     }
     free(response);
@@ -403,8 +436,8 @@ double** nds_kmeans_block(struct resources *res, uint64_t id, uint64_t numCoords
     long duration;
 
     // initialization
-    // tested beforehand and found out we will have 2 loops;
-    size_t total_iteration = (M / SUB_M) * 8;
+    // tested beforehand and found out we will have 11 loops;
+    size_t total_iteration = (M / SUB_M) * 32;
     queue_timing = timing_info_new(total_iteration);
     if (queue_timing == NULL) {
         printf("cannot create queue_timing\n");
@@ -537,6 +570,7 @@ double** nds_kmeans_block(struct resources *res, uint64_t id, uint64_t numCoords
                 fprintf(stderr, "sync error before RDMA ops\n");
                 return clusters;
             }
+            buf = (double *) (res->buf + response->offset);
             timing_info_push_end(cluster_fetch_timing);
 
             timing_info_push_start(cluster_assignment_timing);
@@ -547,7 +581,7 @@ double** nds_kmeans_block(struct resources *res, uint64_t id, uint64_t numCoords
                 /* update new cluster centers : sum of objects located within */
                 newClusterSize[index]++;
                 for (j=0; j<numCoords; j++) {
-                    newClusters[j][index] += res->buf[j * SUB_M + i];
+                    newClusters[j][index] += buf[j * SUB_M + i];
                 }
             }
             timing_info_push_end(cluster_assignment_timing);
@@ -771,6 +805,15 @@ int main(int argc, char *argv[]) {
     printf("calculating the result of pagerank\n");    
 
     clusters = nds_kmeans_block(&res, matrix_id, numCoords, numObjs, numClusters, SUB_M, threshold, membership, &loop_iterations);
+    file_write(numClusters, numObjs, numCoords, clusters, membership);
+
+    printf("\nPerforming **** Regular Kmeans (CUDA version) ****\n");
+    printf("numObjs       = %lu\n", numObjs);
+    printf("numCoords     = %lu\n", numCoords);
+    printf("numClusters   = %lu\n", numClusters);
+    printf("threshold     = %.4f\n", threshold);
+
+    printf("Loop iterations    = %d\n", loop_iterations);
     
     close(res.sock);
     close(res.req_sock);
