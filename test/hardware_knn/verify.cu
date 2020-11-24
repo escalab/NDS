@@ -22,11 +22,11 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 4096UL
+#define SUB_M 1024UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-#define IO_QUEUE_SZ 1UL
+#define IO_QUEUE_SZ 4UL
 
 void print_config(struct config_t config);
 
@@ -333,7 +333,8 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
     struct timing_info *queue_timing;
     struct timing_info *col_fetch_timing;
     struct timing_info *copy_in_timing;
-    struct timing_info *kernel_timing;
+    struct timing_info *kernel_1_timing;
+    struct timing_info *kernel_2_timing;
     struct timing_info *copy_out_timing;    
     
     pthread_t f_thread_id; 
@@ -365,9 +366,15 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         return -1;
     }
 
-    kernel_timing = timing_info_new(total_iteration);
-    if (kernel_timing == NULL) {
-        printf("cannot create kernel_timing\n");
+    kernel_1_timing = timing_info_new(total_iteration);
+    if (kernel_1_timing == NULL) {
+        printf("cannot create kernel_1_timing\n");
+        return -1;
+    }
+
+    kernel_2_timing = timing_info_new(total_iteration);
+    if (kernel_2_timing == NULL) {
+        printf("cannot create kernel_2_timing\n");
         return -1;
     }
 
@@ -412,7 +419,8 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
     timing_info_set_starting_time(queue_timing);
     timing_info_set_starting_time(col_fetch_timing);
     timing_info_set_starting_time(copy_in_timing);
-    timing_info_set_starting_time(kernel_timing);
+    timing_info_set_starting_time(kernel_1_timing);
+    timing_info_set_starting_time(kernel_2_timing);
     timing_info_set_starting_time(copy_out_timing);
 
     gettimeofday(&h_start, NULL);
@@ -464,7 +472,7 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         // entry = (struct fifo_entry *) fifo_pop(sending_queue);
         timing_info_push_end(queue_timing);
 
-        timing_info_push_start(kernel_timing);
+        timing_info_push_start(kernel_1_timing);
         // Compute the squared norm of the reference points
         compute_squared_norm<<<(SUB_M+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(ptr_a, SUB_M, ref_pitch, dim, ref_norm_dev);
         if (cudaGetLastError() != cudaSuccess) {
@@ -509,10 +517,11 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         }
         // fifo_push(complete_queue, entry);
         cudaDeviceSynchronize();
-        timing_info_push_end(kernel_timing);
+        timing_info_push_end(kernel_1_timing);
     }
 
     // Sort each column for the top-k results
+    timing_info_push_start(kernel_2_timing);
     modified_insertion_sort<<<(query_nb+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(dist_dev, dist_pitch, index_dev, index_pitch, query_nb, ref_nb, k);
     if (cudaGetLastError() != cudaSuccess) {
         printf("ERROR: Unable to execute kernel\n");
@@ -541,6 +550,8 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         cublasDestroy(handle);
         return -1;
     }
+    cudaDeviceSynchronize();
+    timing_info_push_end(kernel_2_timing);
 
     timing_info_push_start(copy_out_timing);
     // Copy k smallest distances / indexes from the device to the host
@@ -569,9 +580,10 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
     printf("Col fetch time: %f ms\n", (float) timing_info_duration(col_fetch_timing) / 1000);
     printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
     printf("sending_queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);
-    printf("Kernel time: %f ms\n", (float) timing_info_duration(kernel_timing) / 1000);
+    printf("Kernel 1 time: %f ms\n", (float) timing_info_duration(kernel_1_timing) / 1000);
     printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
-    
+    printf("Kernel 2 time: %f ms\n", (float) timing_info_duration(kernel_2_timing) / 1000);
+
     struct timestamps *tss = NULL;
     FILE *fptr;
     tss = timing_info_get_timestamps(col_fetch_timing);
@@ -598,13 +610,13 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
     timing_info_free_timestamps(tss);    
     timing_info_free(queue_timing);
 
-    tss = timing_info_get_timestamps(kernel_timing);
-    fptr = fopen("kernel_ts.bin", "wb");
+    tss = timing_info_get_timestamps(kernel_1_timing);
+    fptr = fopen("kernel_1_ts.bin", "wb");
     fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
     fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
     fclose(fptr);
     timing_info_free_timestamps(tss);    
-    timing_info_free(kernel_timing);
+    timing_info_free(kernel_1_timing);
 
     tss = timing_info_get_timestamps(copy_out_timing);
     fptr = fopen("copy_out_ts.bin", "wb");
@@ -613,6 +625,14 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
     fclose(fptr);
     timing_info_free_timestamps(tss);    
     timing_info_free(copy_out_timing);
+
+    tss = timing_info_get_timestamps(kernel_2_timing);
+    fptr = fopen("kernel_2_ts.bin", "wb");
+    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
+    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
+    fclose(fptr);
+    timing_info_free_timestamps(tss);    
+    timing_info_free(kernel_2_timing);
 
     fptr = fopen("knn_dist.bin", "wb");
     fwrite(knn_dist, sizeof(double), query_nb * k, fptr);
@@ -771,6 +791,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "failed to destroy resources\n");
         exit(1);
     }
+
     // close(res.sock);
     close(res.req_sock);
     munmap(hugepage_addr, BUF_SIZE);
