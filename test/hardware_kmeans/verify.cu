@@ -757,18 +757,19 @@ int main(int argc, char *argv[]) {
 
     // some default values
     threshold        = 0.001;
-    numClusters      = 4;
+    // numClusters      = 4;
 
-    if (argc < 5) {
-        printf("usage: %s <table matrix id> <# of reference points> <# of attributes> <port>\n", argv[0]);
+    if (argc < 6) {
+        printf("usage: %s <table matrix id> <# of reference points> <# of attributes> <# of clusters> <port>\n", argv[0]);
         return EXIT_FAILURE;
     }
 
     matrix_id = (uint64_t) atoll(argv[1]);
     numObjs = (uint64_t) atoll(argv[2]);
     numCoords = (uint64_t) atoll(argv[3]);
-    config.tcp_port = atoi(argv[4]);
-
+    numClusters = (uint64_t) atoll(argv[4]);
+    config.tcp_port = atoi(argv[5]);
+    
     /* print the used parameters for info*/
     print_config(config);
     
