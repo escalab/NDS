@@ -32,8 +32,11 @@ struct fetch_conf {
     struct resources *res;
     uint64_t m, sub_m;
     char *hugepage_addr;
+    double *d_addr;
     struct fifo *sending_queue;
     struct fifo *complete_queue;
+    struct timing_info *stripe_fetch_timing;
+    struct timing_info *copy_in_timing;
 };
 
 struct request_conf {
@@ -43,39 +46,69 @@ struct request_conf {
 };
 
 struct fifo_entry {
-    double *ref_dev;
+    double *d_addr;
 };
+
+int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length, struct timing_info *fetch_timing) {
+    struct response *res = NULL;
+
+    timing_info_push_start(fetch_timing);
+    res = sock_read_offset(conf->res->sock);
+    if (res == NULL) {
+        fprintf(stderr, "sync error before RDMA ops\n");
+        return 1;
+    }
+
+    // if (res->id == 0) {
+    //     printf("fetching row [%lu:%lu]\n", res->x, res->y);
+    // } else {
+    //     printf("fetching col [%lu:%lu]\n", res->x, res->y);
+    // }
+    // printf("offset: %lu\n", res->offset);
+
+    timing_info_push_end(fetch_timing);
+
+    timing_info_push_start(conf->copy_in_timing);
+    cudaMemcpy(dst, src + res->offset, length, cudaMemcpyHostToDevice);
+    timing_info_push_end(conf->copy_in_timing);
+
+    free(res);
+    if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
+        fprintf(stderr, "sync error before RDMA ops\n");
+        return 1;
+    }
+    return 0;
+}
 
 void *fetch_thread(void *args) {
     struct fetch_conf *conf = (struct fetch_conf *) args;
     struct fifo_entry *entry = NULL;
-    struct response *res = NULL;
     uint64_t i, st;
+    uint64_t dsize = conf->m * conf->sub_m;
+    double *ptr_a;
+    uint64_t count = 0;
     for (i = 0; i < NITERS; i++) {
         for (st = 0; st < conf->m / conf->sub_m; st++) {
             entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
-            res = sock_read_offset(conf->res->sock);
-            if (res == NULL) {
-                fprintf(stderr, "sync error before RDMA ops\n");
-                return NULL;
-            }
-            free(res);
-            if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
-                fprintf(stderr, "sync error before RDMA ops\n");
-                return NULL;
-            }
+            ptr_a = conf->d_addr + dsize * (count % IO_QUEUE_SZ);
+
+            cudaMemcpyFromMmap(conf, (char *) ptr_a, (char *) conf->hugepage_addr, dsize * sizeof(double), conf->stripe_fetch_timing);
+            count++;
+
+            entry->d_addr = ptr_a;
             fifo_push(conf->sending_queue, entry);
         }
     }
     return NULL;
 }
 
+
 void *request_thread(void *args) {
     struct request_conf *conf = (struct request_conf *) args;
     uint64_t i, st;
     for (i = 0; i < NITERS; i++) {
         for (st = 0; st < M / SUB_M; st++) {
-            sock_write_request(conf->res->req_sock, conf->id, st, st+1, conf->sub_m, 3, 0);
+            sock_write_request(conf->res->req_sock, conf->id, st, st+1, conf->sub_m, 2, 0);
             sock_read_data(conf->res->req_sock);
         }
     }
@@ -87,6 +120,7 @@ void *request_thread(void *args) {
 
 int nds_col_stripe_read(struct resources *res, uint64_t id) {
     size_t i, st;
+    double *d_addr;
 
     struct fifo *sending_queue;
     struct fifo *complete_queue; 
@@ -102,6 +136,24 @@ int nds_col_stripe_read(struct resources *res, uint64_t id) {
     struct timeval h_start, h_end;
     long duration;
     
+    struct timing_info *stripe_fetch_timing;
+    struct timing_info *copy_in_timing;
+
+    size_t total_iteration = (M / SUB_M) * NITERS;
+    stripe_fetch_timing = timing_info_new(total_iteration);
+    if (stripe_fetch_timing == NULL) {
+        printf("cannot create stripe_fetch_timing\n");
+        return -1;
+    }
+
+    copy_in_timing = timing_info_new(total_iteration);
+    if (copy_in_timing == NULL) {
+        printf("cannot create copy_in_timing\n");
+        return -1;
+    }
+
+    cudaMalloc(&d_addr, M * SUB_M * sizeof(double) * IO_QUEUE_SZ);
+
     // it causes problem if size == 1
     sending_queue = fifo_new(IO_QUEUE_SZ * 2);
 	if (sending_queue == NULL) {
@@ -130,6 +182,9 @@ int nds_col_stripe_read(struct resources *res, uint64_t id) {
     f_conf.hugepage_addr = res->buf;
     f_conf.sending_queue = sending_queue;
     f_conf.complete_queue = complete_queue;
+    f_conf.stripe_fetch_timing = stripe_fetch_timing;
+    f_conf.copy_in_timing = copy_in_timing;
+    f_conf.d_addr = d_addr;
 
     gettimeofday(&h_start, NULL);
     pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
@@ -149,10 +204,15 @@ int nds_col_stripe_read(struct resources *res, uint64_t id) {
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     
-    printf("KNN End-to-end duration: %f ms\n", (float) duration / 1000);    
+    printf("Stripe Read End-to-end duration: %f ms\n", (float) duration / 1000);    
+    printf("Col fetch time: %f ms\n", (float) timing_info_duration(stripe_fetch_timing) / 1000);
+    printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
+    timing_info_free(stripe_fetch_timing);
+    timing_info_free(copy_in_timing);
 
     // Memory clean-up and CUBLAS shutdown
     free(entries);
+    cudaFree(d_addr);
     fifo_free(complete_queue);
     fifo_free(sending_queue);
     return 0;
