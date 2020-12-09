@@ -18,8 +18,8 @@ extern "C" {
 }
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
-#define M 32768UL
-#define SUB_M 16384UL
+#define M 65536UL
+#define SUB_M 1024UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
@@ -33,8 +33,11 @@ struct fetch_conf {
     struct resources *res;
     uint64_t m, sub_m;
     char *hugepage_addr;
+    double *d_addr;
     struct fifo *sending_queue;
     struct fifo *complete_queue;
+    struct timing_info *aggregated_fetch_timing;
+    struct timing_info *copy_in_timing;
 };
 
 struct request_conf {
@@ -44,29 +47,59 @@ struct request_conf {
 };
 
 struct fifo_entry {
-    double *ref_dev;
+    double *d_addr;
 };
+
+int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length, struct timing_info *fetch_timing) {
+    struct response *res = NULL;
+
+    timing_info_push_start(fetch_timing);
+    res = sock_read_offset(conf->res->sock);
+    if (res == NULL) {
+        fprintf(stderr, "sync error before RDMA ops\n");
+        return 1;
+    }
+
+    // if (res->id == 0) {
+    //     printf("fetching row [%lu:%lu]\n", res->x, res->y);
+    // } else {
+    //     printf("fetching col [%lu:%lu]\n", res->x, res->y);
+    // }
+    // printf("offset: %lu\n", res->offset);
+
+    timing_info_push_end(fetch_timing);
+
+    timing_info_push_start(conf->copy_in_timing);
+    cudaMemcpy(dst, src + res->offset, length, cudaMemcpyHostToDevice);
+    timing_info_push_end(conf->copy_in_timing);
+
+    free(res);
+    if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
+        fprintf(stderr, "sync error before RDMA ops\n");
+        return 1;
+    }
+    return 0;
+}
 
 void *fetch_thread(void *args) {
     struct fetch_conf *conf = (struct fetch_conf *) args;
     struct fifo_entry *entry = NULL;
-    struct response *res = NULL;
     uint64_t iter, i, j;
+    uint64_t dsize = conf->sub_m * conf->sub_m;
+    double *ptr_a;
+    uint64_t count = 0;
+
     for (iter = 0; iter < NITERS; iter++) {
         for (i = 0; i < conf->m / conf->sub_m; i++) {
             for (j = 0; j < conf->m / conf->sub_m; j++) {
                 entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
-                res = sock_read_offset(conf->res->sock);
-                if (res == NULL) {
-                    fprintf(stderr, "sync error before RDMA ops\n");
-                    return NULL;
-                }
-                free(res);
-                if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
-                    fprintf(stderr, "sync error before RDMA ops\n");
-                    return NULL;
-                }
-                fifo_push(conf->sending_queue, entry);            
+                ptr_a = conf->d_addr + dsize * (count % IO_QUEUE_SZ);
+
+                cudaMemcpyFromMmap(conf, (char *) ptr_a, (char *) conf->hugepage_addr, dsize * sizeof(double), conf->aggregated_fetch_timing);
+                count++;
+
+                entry->d_addr = ptr_a;
+                fifo_push(conf->sending_queue, entry);
             }
         }
     }
@@ -92,6 +125,7 @@ void *request_thread(void *args) {
 
 int nds_aggregated_read(struct resources *res, uint64_t id) {
     size_t iter, i, j;
+    double *d_addr;
 
     struct fifo *sending_queue;
     struct fifo *complete_queue; 
@@ -107,6 +141,24 @@ int nds_aggregated_read(struct resources *res, uint64_t id) {
     struct timeval h_start, h_end;
     long duration;
     
+    struct timing_info *aggregated_fetch_timing;
+    struct timing_info *copy_in_timing;
+
+    size_t total_iteration = (M / SUB_M) * (M / SUB_M) * NITERS;
+    aggregated_fetch_timing = timing_info_new(total_iteration);
+    if (aggregated_fetch_timing == NULL) {
+        printf("cannot create aggregated_fetch_timing\n");
+        return -1;
+    }
+
+    copy_in_timing = timing_info_new(total_iteration);
+    if (copy_in_timing == NULL) {
+        printf("cannot create copy_in_timing\n");
+        return -1;
+    }
+
+    cudaMalloc(&d_addr, SUB_M * SUB_M * sizeof(double) * IO_QUEUE_SZ);
+
     // it causes problem if size == 1
     sending_queue = fifo_new(IO_QUEUE_SZ * 2);
 	if (sending_queue == NULL) {
@@ -136,6 +188,9 @@ int nds_aggregated_read(struct resources *res, uint64_t id) {
     f_conf.hugepage_addr = res->buf;
     f_conf.sending_queue = sending_queue;
     f_conf.complete_queue = complete_queue;
+    f_conf.aggregated_fetch_timing = aggregated_fetch_timing;
+    f_conf.copy_in_timing = copy_in_timing;
+    f_conf.d_addr = d_addr;
 
     gettimeofday(&h_start, NULL);
     pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
@@ -157,10 +212,15 @@ int nds_aggregated_read(struct resources *res, uint64_t id) {
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     
-    printf("Read End-to-end duration: %f ms\n", (float) duration / 1000);    
+    printf("Aggregated Read End-to-end duration: %f ms\n", (float) duration / 1000);    
+    printf("Col fetch time: %f ms\n", (float) timing_info_duration(aggregated_fetch_timing) / 1000);
+    printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
+    timing_info_free(aggregated_fetch_timing);
+    timing_info_free(copy_in_timing);
 
     // Memory clean-up and CUBLAS shutdown
     free(entries);
+    cudaFree(d_addr);
     fifo_free(complete_queue);
     fifo_free(sending_queue);
     return 0;
