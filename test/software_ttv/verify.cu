@@ -18,13 +18,13 @@ extern "C" {
 #define LDB2 LDB1*N
 #define LDC1 N
 
-#define SUB_M 256UL
+#define SUB_M 512UL
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define AGGREGATED_SZ (SUB_M * SUB_M * SUB_M * 8UL)
 
-// #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
-#define IO_QUEUE_SZ 1UL
+#define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
+// #define IO_QUEUE_SZ 1UL
 
 #define NITERS 4UL
 
@@ -38,7 +38,7 @@ struct fetch_conf {
     struct fifo *sending_queue;
     struct fifo *complete_queue;
     struct timing_info *fetch_timing;
-    struct timing_info *copy_in_timing;
+    struct timing_info *copy_in_B_timing;
 };
 
 struct request_conf {
@@ -82,9 +82,9 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
 
     timing_info_push_end(fetch_timing);
 
-    timing_info_push_start(conf->copy_in_timing);
+    timing_info_push_start(conf->copy_in_B_timing);
     cudaMemcpy(dst, src + res->offset, length, cudaMemcpyHostToDevice);
-    timing_info_push_end(conf->copy_in_timing);
+    timing_info_push_end(conf->copy_in_B_timing);
 
     free(res);
     if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
@@ -161,7 +161,8 @@ int nds_ttv(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size
 
     struct timing_info *queue_timing;
     struct timing_info *fetch_timing;
-    struct timing_info *copy_in_timing;
+    struct timing_info *copy_in_B_timing;
+    struct timing_info *copy_in_C_timing;
     struct timing_info *ttv_timing;
     struct timing_info *copy_out_timing;    
     
@@ -188,9 +189,15 @@ int nds_ttv(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size
         return -1;
     }
 
-    copy_in_timing = timing_info_new(total_iteration * 2);
-    if (copy_in_timing == NULL) {
-        printf("cannot create copy_in_timing\n");
+    copy_in_B_timing = timing_info_new(total_iteration);
+    if (copy_in_B_timing == NULL) {
+        printf("cannot create copy_in_B_timing\n");
+        return -1;
+    }
+
+    copy_in_C_timing = timing_info_new(total_iteration);
+    if (copy_in_C_timing == NULL) {
+        printf("cannot create copy_in_C_timing\n");
         return -1;
     }
 
@@ -227,9 +234,10 @@ int nds_ttv(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size
     sub_B = (double *) malloc(SUB_M * SUB_M * SUB_M * sizeof(double));
     sub_C = (double *) malloc(SUB_M * SUB_M * sizeof(double));
 
-    cudaMalloc((void **) &d_A, SUB_M * sizeof(double));
+    cudaMalloc((void **) &d_A, K * sizeof(double));
     cudaMalloc((void **) &d_B, SUB_M * SUB_M * SUB_M * sizeof(double) * IO_QUEUE_SZ);
     cudaMalloc((void **) &d_C, SUB_M * SUB_M * sizeof(double));
+    cudaMemcpy(d_A, A, K * sizeof(double), cudaMemcpyHostToDevice);
 
     // M * N has to be < 1024
     dim3 grid((SUB_M+32)/32, (SUB_M+32)/32);
@@ -249,11 +257,11 @@ int nds_ttv(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size
     f_conf.sending_queue = sending_queue;
     f_conf.complete_queue = complete_queue;
     f_conf.fetch_timing = fetch_timing;
-    f_conf.copy_in_timing = copy_in_timing;
+    f_conf.copy_in_B_timing = copy_in_B_timing;
 
     timing_info_set_starting_time(queue_timing);
     timing_info_set_starting_time(fetch_timing);
-    timing_info_set_starting_time(copy_in_timing);
+    timing_info_set_starting_time(copy_in_B_timing);
     timing_info_set_starting_time(ttv_timing);
     timing_info_set_starting_time(copy_out_timing);
 	pthread_create(&f_thread_id, NULL, fetch_thread, &f_conf); 
@@ -262,29 +270,28 @@ int nds_ttv(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size
     // blockGEMM
     for (n = 0; n < N; n+=SUB_M) {
         for (m = 0; m < M; m+=SUB_M) { 
-            for (nn = n, a = 0; nn < n+SUB_M; nn++, a++) {
-                for (mm = m, b = 0; mm < m+SUB_M; mm++, b++) {
-                    sub_C[b + a * SUB_M] = C[mm + nn * LDC1];
-                }
-                cudaMemcpy(d_C, sub_C, SUB_M * SUB_M * sizeof(double), cudaMemcpyHostToDevice);
-            }   
+            timing_info_push_start(copy_in_C_timing);
+            cudaMemset(d_C, 0, SUB_M * SUB_M * sizeof(double));
+            // for (nn = n, a = 0; nn < n+SUB_M; nn++, a++) {
+            //     for (mm = m, b = 0; mm < m+SUB_M; mm++, b++) {
+            //         sub_C[b + a * SUB_M] = C[mm + nn * LDC1];
+            //     }
+            //     cudaMemcpy(d_C, sub_C, SUB_M * SUB_M * sizeof(double), cudaMemcpyHostToDevice);
+            // }  
+            timing_info_push_end(copy_in_C_timing);
             for (k = 0; k < K; k+=SUB_M) {
-                // memcpy?
-                for (kk = k, c = 0; kk < k+SUB_M; kk++, c++) {
-                    sub_A[c] = A[kk];
-                }
-                cudaMemcpy(d_A, sub_A, SUB_M * sizeof(double), cudaMemcpyHostToDevice);
-
                 timing_info_push_start(queue_timing);
                 entry = (struct fifo_entry *) fifo_pop(sending_queue);
                 timing_info_push_end(queue_timing);
                 timing_info_push_start(ttv_timing);
-                block_ttv_kernel<<<grid, block>>>(d_A, entry->d_B, d_C);
+                block_ttv_kernel<<<grid, block>>>(d_A + k, entry->d_B, d_C);
                 fifo_push(complete_queue, entry);
                 timing_info_push_end(ttv_timing);
             }
             // assign C
             timing_info_push_start(copy_out_timing);
+
+            // use cudaMemcpy2D but not the bottleneck.
             cudaMemcpy(sub_C, d_C, SUB_M * SUB_M * sizeof(double), cudaMemcpyDeviceToHost);
             for (nn = n, a = 0; nn < n+SUB_M; nn++, a++) {
                 for (mm = m, b = 0; mm < m+SUB_M; mm++, b++) {
@@ -300,7 +307,8 @@ int nds_ttv(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size
     printf("TTV duration: %f ms\n", (float) duration / 1000);    
 
     printf("Row fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
-    printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
+    printf("Copy in B time: %f ms\n", (float) timing_info_duration(copy_in_B_timing) / 1000);
+    printf("Copy in C time: %f ms\n", (float) timing_info_duration(copy_in_C_timing) / 1000);
     printf("sending_queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);
     printf("Kernel time: %f ms\n", (float) timing_info_duration(ttv_timing) / 1000);
     printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
@@ -311,21 +319,29 @@ int nds_ttv(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size
     struct timestamps *tss = NULL;
     FILE *fptr;
     tss = timing_info_get_timestamps(fetch_timing);
-    fptr = fopen("row_fetch_ts.bin", "wb");
+    fptr = fopen("fetch_ts.bin", "wb");
     fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
     fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
     fclose(fptr);
     timing_info_free_timestamps(tss);    
     timing_info_free(fetch_timing);
 
-    tss = timing_info_get_timestamps(copy_in_timing);
-    fptr = fopen("copy_in_ts.bin", "wb");
+    tss = timing_info_get_timestamps(copy_in_B_timing);
+    fptr = fopen("copy_in_B_ts.bin", "wb");
     fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
     fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
     fclose(fptr);
     timing_info_free_timestamps(tss);    
-    timing_info_free(copy_in_timing);
+    timing_info_free(copy_in_B_timing);
     
+    tss = timing_info_get_timestamps(copy_in_C_timing);
+    fptr = fopen("copy_in_C_ts.bin", "wb");
+    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
+    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
+    fclose(fptr);
+    timing_info_free_timestamps(tss);    
+    timing_info_free(copy_in_C_timing);
+
     tss = timing_info_get_timestamps(queue_timing);
     fptr = fopen("queue_ts.bin", "wb");
     fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
@@ -335,7 +351,7 @@ int nds_ttv(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size
     timing_info_free(queue_timing);
 
     tss = timing_info_get_timestamps(ttv_timing);
-    fptr = fopen("gemm_ts.bin", "wb");
+    fptr = fopen("ttv_ts.bin", "wb");
     fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
     fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
     fclose(fptr);
