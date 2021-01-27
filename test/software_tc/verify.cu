@@ -13,7 +13,7 @@ extern "C" {
 #define M 2048UL
 #define N M
 #define K N
-#define P 32UL
+#define P 16UL
 
 #define LDA1 K
 #define LDB1 M
