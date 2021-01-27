@@ -500,7 +500,10 @@ int main(int argc, char *argv[]) {
     printf("calculating the result of pagerank\n");
     rc = nds_ttv(&res, matrix_id, n, sub_n, A, C);
     
-    close(res.sock);
+    if (resources_destroy(&res)) {
+        fprintf(stderr, "failed to destroy resources\n");
+        exit(1);
+    }
     close(res.req_sock);
     munmap(hugepage_addr, BUF_SIZE);
     close(hugepage_fd);
