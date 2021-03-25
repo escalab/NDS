@@ -212,7 +212,7 @@ int nds_bfs(struct resources *res, uint64_t id, uint64_t num_of_vertices, uint64
         cudaMemset(d_has_next, 0, sizeof(bool));
         
         for (st = 0; st < num_of_vertices / num_of_subvertices; st++) {
-            cudaMemcpyFromMmap(&f_conf, id, (st/num_of_subvertices), (st/num_of_subvertices)+1, num_of_subvertices, 3, 0,
+            cudaMemcpyFromMmap(&f_conf, id, st, st+1, num_of_subvertices, 3, 0,
                 (char *) graph_d, (char *) res->buf, stripe_size, col_fetch_timing);    
 
             timing_info_push_start(kernel_timing);

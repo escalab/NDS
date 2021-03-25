@@ -239,7 +239,7 @@ int nds_bfs(struct resources *res, uint64_t id, uint64_t num_of_vertices, uint64
             for (i = st * num_of_subvertices; i < (st+1) * num_of_subvertices; i++) {
                 if (graph_mask_h[i]) {
                     // printf("st: %lu\n", st * num_of_subvertices);
-                    cudaMemcpyFromMmap(&f_conf, id, (st/num_of_subvertices), (st/num_of_subvertices)+1, num_of_subvertices, 2, 0,
+                    cudaMemcpyFromMmap(&f_conf, id, st, st+1, num_of_subvertices, 2, 0,
                         (char *) graph_d, (char *) res->buf, stripe_size, row_fetch_timing);    
                     fetch_iter++;
 
