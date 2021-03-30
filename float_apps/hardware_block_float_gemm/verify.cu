@@ -11,7 +11,7 @@ extern "C" {
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
 #define SUB_M 16384UL
-#define SUBSUB_M 16384UL
+#define SUBSUB_M 1024UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 4UL)
 
 #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
@@ -37,6 +37,7 @@ struct request_conf {
 };
 
 struct fifo_entry {
+    struct response *a_res, *b_res;
     float *a_sub_d, *b_sub_d;
 };
 
@@ -107,24 +108,46 @@ int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, cons
 void *fetch_thread(void *args) {
     struct fetch_conf *conf = (struct fetch_conf *) args;
     uint64_t i, j, k;
-    uint64_t dsize = conf->sub_m * conf->sub_m;
-    float *ptr_a, *ptr_b;
     struct fifo_entry *entry = NULL;
-    uint64_t count = 0;
 
     for (i = 0; i < conf->m / conf->sub_m; i++) {
         for (j = 0; j < conf->m / conf->sub_m; j++) {
             for (k = 0; k < conf->m / conf->sub_m; k++) {
                 entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
-                ptr_a = conf->a_sub_d + dsize * (count % IO_QUEUE_SZ);
-                ptr_b = conf->b_sub_d + dsize * (count % IO_QUEUE_SZ);
 
-                cudaMemcpyFromMmap(conf, (char *) ptr_a, (char *) conf->hugepage_addr, dsize * sizeof(float));
-                cudaMemcpyFromMmap(conf, (char *) ptr_b, (char *) conf->hugepage_addr, dsize * sizeof(float));
-                count++;
-
-                entry->a_sub_d = ptr_a;
-                entry->b_sub_d = ptr_b;
+                timing_info_push_start(conf->fetch_timing);
+                entry->a_res = sock_read_offset(conf->res->sock);
+                if (entry->a_res == NULL) {
+                    fprintf(stderr, "sync error before RDMA ops\n");
+                    return NULL;
+                }
+                // if (res->id == 0) {
+                //     printf("fetching A[%lu][%lu]\n", res->y, res->x);
+                // } else {
+                //     printf("fetching B[%lu][%lu]\n", res->y, res->x);
+                // }
+                if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
+                    fprintf(stderr, "sync error before RDMA ops\n");
+                    return NULL;
+                }
+                timing_info_push_end(conf->fetch_timing);
+                
+                timing_info_push_start(conf->fetch_timing);
+                entry->b_res = sock_read_offset(conf->res->sock);
+                if (entry->b_res == NULL) {
+                    fprintf(stderr, "sync error before RDMA ops\n");
+                    return NULL;
+                }
+                // if (res->id == 0) {
+                //     printf("fetching A[%lu][%lu]\n", res->y, res->x);
+                // } else {
+                //     printf("fetching B[%lu][%lu]\n", res->y, res->x);
+                // }
+                if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
+                    fprintf(stderr, "sync error before RDMA ops\n");
+                    return NULL;
+                }
+                timing_info_push_end(conf->fetch_timing);
                 fifo_push(conf->sending_queue, entry);
             }
         }
@@ -246,8 +269,8 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t id, uint64_
 
     // cuda malloc
     dsize = sub_m * sub_m;
-    cudaMalloc((void **) &a_sub_d, sizeof(float) * dsize * IO_QUEUE_SZ);
-    cudaMalloc((void **) &b_sub_d, sizeof(float) * dsize * IO_QUEUE_SZ);
+    cudaMalloc((void **) &a_sub_d, sizeof(float) * dsize);
+    cudaMalloc((void **) &b_sub_d, sizeof(float) * dsize);
     cudaMalloc((void **) &c_sub_f, sizeof(float) * dsize);
 
     r_conf.res = res;
@@ -288,22 +311,27 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t id, uint64_
                 entry = (struct fifo_entry *) fifo_pop(sending_queue);
                 timing_info_push_end(queue_timing);
 
-                // timing_info_push_start(d2h_timing);
-                // d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(entry->a_sub_d, a_sub_h, dsize);
-                // d2h_kernel<<<(dsize+MAX_THREAD-1)/MAX_THREAD,MAX_THREAD>>>(entry->b_sub_d, b_sub_h, dsize);
-                // timing_info_push_end(d2h_timing);
+                timing_info_push_start(copy_in_timing);
+                cudaMemcpy(a_sub_d, res->buf + entry->a_res->offset, dsize * sizeof(float), cudaMemcpyHostToDevice);
+                free(entry->a_res);
+                timing_info_push_end(copy_in_timing);
+
+                timing_info_push_start(copy_in_timing);
+                cudaMemcpy(b_sub_d, res->buf + entry->b_res->offset, dsize * sizeof(float), cudaMemcpyHostToDevice);
+                free(entry->b_res);
+                fifo_push(complete_queue, entry);
+                timing_info_push_end(copy_in_timing);
 
                 // gemm
                 timing_info_push_start(gemm_timing);
                 for (sub_i = 0; sub_i < SUB_M; sub_i+=SUBSUB_M) {
                     for (sub_j = 0; sub_j < SUB_M; sub_j+=SUBSUB_M) {
                         for (sub_k = 0; sub_k < SUB_M; sub_k+=SUBSUB_M) {
-                            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, SUBSUB_M, SUBSUB_M, SUBSUB_M, &alpha, (entry->b_sub_d + sub_k * SUB_M + sub_i), CUDA_R_32F, SUBSUB_M, (entry->a_sub_d + sub_i * SUB_M + sub_k), CUDA_R_32F, SUBSUB_M, &beta, c_sub_f + sub_i * SUB_M + sub_j, CUDA_R_32F, SUBSUB_M, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+                            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, SUBSUB_M, SUBSUB_M, SUBSUB_M, &alpha, (b_sub_d + sub_k * SUB_M + sub_i), CUDA_R_32F, SUBSUB_M, (a_sub_d + sub_i * SUB_M + sub_k), CUDA_R_32F, SUBSUB_M, &beta, c_sub_f + sub_i * SUB_M + sub_j, CUDA_R_32F, SUBSUB_M, CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
                         }
                     }
                 }
                 cudaDeviceSynchronize();
-                fifo_push(complete_queue, entry);
                 timing_info_push_end(gemm_timing);
             }
             timing_info_push_start(copy_out_timing);
