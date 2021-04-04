@@ -9,7 +9,7 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 8192UL
+#define SUB_M 256UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
 #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
@@ -46,57 +46,6 @@ struct fifo_entry {
     size_t st;
     double *edges;
 };
-
-// construct vertices metadata first
-__global__ void pagerank_update(double *vertices, size_t st, double *in_graph, double *out_graph, int *updated, size_t num_of_vertices, size_t num_of_subvertices, int iter, int niters) {
-    // v.outc is num_outedges()
-    // needs: v.num_inedges(), v.inedge(), v.id(), v.outc, v.set_data
-    size_t id = threadIdx.x + blockDim.x * blockIdx.x;
-    if (id >= num_of_subvertices) {
-        return;
-    }
-    size_t i, outc = 0;
-    double *inedge, *outedge;
-    double sum = 0;
-
-    inedge = in_graph + id;
-    outedge = out_graph + id * num_of_vertices;
-    id = st + id;
-
-    for (i = 0; i < num_of_vertices; i++) {
-        if (i != id && outedge[i] != 0) {
-            outc++;
-        }
-    }
-
-    if (iter == 0) {
-        for (i = 0; i < num_of_vertices; i++) {
-            if (i != id && outedge[i] != 0) {
-                outedge[i] = 1.0 / outc;
-                *updated = 1;
-            }
-        }
-        vertices[id] = RANDOMRESETPROB;
-    } else {
-        for (i = 0; i < num_of_vertices; i++) {
-            // we don't consider self-loop
-            if (inedge[i * num_of_subvertices] && i != id) {
-                sum += inedge[i * num_of_subvertices];
-            }
-        }
-        double pagerank = (RANDOMRESETPROB + (1 - RANDOMRESETPROB) * sum);
-        if (outc > 0) {
-            double pagerankcont = pagerank / (double) outc;
-            for (i = 0; i < num_of_vertices; i++) {
-                if (i != id && outedge[i] != 0) {
-                    outedge[i] = pagerankcont;
-                    *updated = 1;
-                }
-            }
-        } 
-        vertices[id] = pagerank;
-    }
-}
 
 int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length, struct timing_info *fetch_timing) {
     struct response *res = NULL;
@@ -332,7 +281,7 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
             timing_info_push_start(row_write_timing);
             entry = (struct fifo_entry *) fifo_pop(complete_queue);
             entry->id = matrix_id;
-            entry->op = 4;
+            entry->op = 5;
             entry->st = st;
             entry->sub_m = sub_m;
             entry->which = 0;
