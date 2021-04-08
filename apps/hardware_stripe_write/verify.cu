@@ -9,7 +9,7 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 4096UL
+#define SUB_M 256UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
 #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
@@ -284,8 +284,12 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
 
     // subgraph initialization
     stripe_size = m * sub_m * sizeof(double);
-    cudaMalloc((void **) &outedges, stripe_size);
-    cudaMemset(outedges, 5, stripe_size);
+    cudaMalloc((void **) &outedges, HUGEPAGE_SZ);
+    double *h_outedges = (double *) malloc(HUGEPAGE_SZ);
+    for (i = 0; i < HUGEPAGE_SZ / sizeof(double); i++) {
+        h_outedges[i] = (double) rand() / (double) RAND_MAX;
+    }
+    cudaMemcpy(outedges, h_outedges, HUGEPAGE_SZ, cudaMemcpyHostToDevice);
 
     timing_info_set_starting_time(copy_out_timing);
     timing_info_set_starting_time(row_write_timing);
@@ -314,20 +318,19 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
     for (i = 0; i < NITERS; i++) {
         // printf("iter: %lu\n", i);
         for (st = 0; st < m / sub_m; st++) {
-            timing_info_push_start(copy_out_timing);
             // assume we can write to different offset on RDMA buffer 
             // (it looks I/O bound anyway)
             entry = (struct fifo_entry *) fifo_pop(complete_queue);
-            cudaMemcpy(res->buf + (AGGREGATED_SZ * (count % IO_QUEUE_SZ)), outedges, stripe_size, cudaMemcpyDeviceToHost);
+            timing_info_push_start(copy_out_timing);
+            cudaMemcpy(res->buf + (AGGREGATED_SZ * (count % IO_QUEUE_SZ)), (char *) outedges + (AGGREGATED_SZ * (count % IO_QUEUE_SZ)), AGGREGATED_SZ, cudaMemcpyDeviceToHost);
+            timing_info_push_end(copy_out_timing);
             count++;
             entry->id = matrix_id;
-            entry->op = 5;
+            entry->op = 4;
             entry->st = st;
             entry->sub_m = SUB_M;
             entry->which = 0;
             fifo_push(request_queue, entry);
-            timing_info_push_end(copy_out_timing);
-
         }
     }
     gettimeofday(&h_end, NULL);
@@ -348,7 +351,7 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
     timing_info_free(row_write_timing);
 
     cudaFree(outedges);
-
+    free(h_outedges);
     fifo_free(kernel_queue);
     fifo_free(request_queue);
     fifo_free(fetching_queue);

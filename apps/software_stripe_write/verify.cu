@@ -284,8 +284,12 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
 
     // subgraph initialization
     stripe_size = m * sub_m * sizeof(double);
-    cudaMalloc((void **) &outedges, stripe_size);
-    cudaMemset(outedges, 5, stripe_size);
+    cudaMalloc((void **) &outedges, HUGEPAGE_SZ);
+    double *h_outedges = (double *) malloc(HUGEPAGE_SZ);
+    for (i = 0; i < HUGEPAGE_SZ / sizeof(double); i++) {
+        h_outedges[i] = (double) rand() / (double) RAND_MAX;
+    }
+    cudaMemcpy(outedges, h_outedges, HUGEPAGE_SZ, cudaMemcpyHostToDevice);
 
     timing_info_set_starting_time(copy_out_timing);
     timing_info_set_starting_time(row_write_timing);
@@ -318,11 +322,11 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
             // (it looks I/O bound anyway)
             entry = (struct fifo_entry *) fifo_pop(complete_queue);
             timing_info_push_start(copy_out_timing);
-            cudaMemcpy(res->buf + (AGGREGATED_SZ * (count % IO_QUEUE_SZ)), outedges, stripe_size, cudaMemcpyDeviceToHost);
+            cudaMemcpy(res->buf + (AGGREGATED_SZ * (count % IO_QUEUE_SZ)), (char *) outedges + (AGGREGATED_SZ * (count % IO_QUEUE_SZ)), AGGREGATED_SZ, cudaMemcpyDeviceToHost);
             timing_info_push_end(copy_out_timing);
             count++;
             entry->id = matrix_id;
-            entry->op = 4;
+            entry->op = 5;
             entry->st = st;
             entry->sub_m = SUB_M;
             entry->which = 0;
@@ -334,7 +338,7 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
 
     fifo_close(request_queue);
     pthread_join(r_thread_id, NULL); 
-    sock_write_request(res->req_sock, -1, 0, 1, SUB_M, 4, 0);
+    sock_write_request(res->req_sock, -1, 0, 1, SUB_M, 5, 0);
     sock_read_data(res->req_sock);
 
     pthread_join(f_thread_id, NULL); 
@@ -347,7 +351,7 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
     timing_info_free(row_write_timing);
 
     cudaFree(outedges);
-
+    free(h_outedges);
     fifo_free(kernel_queue);
     fifo_free(request_queue);
     fifo_free(fetching_queue);

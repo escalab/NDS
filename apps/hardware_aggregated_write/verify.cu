@@ -279,8 +279,13 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
 
     // subgraph initialization
     stripe_size = sub_m * sub_m * sizeof(double);
-    cudaMalloc((void **) &outedges, stripe_size);
-    cudaMemset(outedges, 5, stripe_size);
+    cudaMalloc((void **) &outedges, HUGEPAGE_SZ);
+    double *h_outedges = (double *) malloc(HUGEPAGE_SZ);
+    for (i = 0; i < HUGEPAGE_SZ / sizeof(double); i++) {
+        h_outedges[i] = (double) rand() / (double) RAND_MAX;
+    }
+    cudaMemcpy(outedges, h_outedges, HUGEPAGE_SZ, cudaMemcpyHostToDevice);
+
 
     r_conf.res = res;
     r_conf.request_queue = request_queue;
@@ -309,11 +314,12 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
             for (j = 0; j < (M / SUB_M); j++) {
                 // printf("i: %lu, j: %lu\n", i, j);
 
-                timing_info_push_start(copy_out_timing);
                 // assume we can write to different offset on RDMA buffer 
                 // (it looks I/O bound anyway)
                 entry = (struct fifo_entry *) fifo_pop(complete_queue);
-                cudaMemcpy(res->buf + (AGGREGATED_SZ * (count % IO_QUEUE_SZ)), outedges, stripe_size, cudaMemcpyDeviceToHost);
+                timing_info_push_start(copy_out_timing);
+                cudaMemcpy(res->buf + (AGGREGATED_SZ * (count % IO_QUEUE_SZ)), (char *) outedges + (AGGREGATED_SZ * (count % IO_QUEUE_SZ)), AGGREGATED_SZ, cudaMemcpyDeviceToHost);
+                timing_info_push_end(copy_out_timing);
                 count++;
                 entry->id = matrix_id;
                 entry->op = 2;
@@ -322,7 +328,6 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
                 entry->sub_m = SUB_M;
                 entry->which = 0;
                 fifo_push(request_queue, entry);
-                timing_info_push_end(copy_out_timing);
             }
         }
     }
