@@ -4,9 +4,10 @@ LD_FLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -l
 # LD_FLAGS += -I../../lib/gemm -L../../lib/gemm -lcublasGEMM 
 # LD_FLAGS = -lcuda -lcublas -lcudart  -lpthread -ldl
 LD_FLAGS += -L../../lib/timing/ -I../../lib/timing/ -ltiming
+LD_FLAGS += -L../../lib/fifo/ -I../../lib/fifo/ -lfifo
 
 TARGET=aggregated_read
-SRC=verify.cu fifo.c rdma.c setup_rdma.c sock.c
+SRC=verify.cu rdma.c setup_rdma.c sock.c
 
 ifeq ($(debug),1)
 	LD_FLAGS += -g -DDEBUG
