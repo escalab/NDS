@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS=-O3 -Wall
 
-TARGET = libtiming.so
+TARGET = libtiming.a
 SRC=timing.c
 
 ifeq ($(debug),1)
@@ -13,7 +13,9 @@ default: $(TARGET)
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -fPIC --shared -o $@ $< 
+	$(CC) $(CFLAGS) -c $<
+	ar rcs $@ *.o
+	rm *.o
 
 clean:
 	rm -f $(TARGET)
