@@ -12,7 +12,7 @@ ls = list(p.glob('**/*/{}'.format(sys.argv[1].split('/')[-1])))
 print('source file is {}'.format(src_path.resolve()))
 result = True
 
-if len(ls) <= 0:
+if len(ls) <= 1:
     print("doesn't get any files to compare")
     exit(1)
 
