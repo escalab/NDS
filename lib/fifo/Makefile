@@ -1,8 +1,8 @@
 CC=gcc
 CFLAGS=-O3 -Wall
 
-TARGET = libtiming.a
-SRC=timing.c
+TARGET=libfifo.a
+SRC=fifo.c
 
 ifeq ($(debug),1)
 	CFLAGS += -g -DDEBUG
@@ -13,7 +13,7 @@ default: $(TARGET)
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -c $<
+	$(CC) $(CFLAGS) -c $^
 	ar rcs $@ *.o
 	rm *.o
 

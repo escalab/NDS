@@ -467,8 +467,8 @@ int resources_create(struct resources *res, struct config_t *config) {
     qp_init_attr.recv_cq = res->cq;
     qp_init_attr.cap.max_send_wr = CQ_NUM_ENTRIES;
     qp_init_attr.cap.max_recv_wr = CQ_NUM_ENTRIES;
-    qp_init_attr.cap.max_send_sge = 2;
-    qp_init_attr.cap.max_recv_sge = 2;
+    qp_init_attr.cap.max_send_sge = 4;
+    qp_init_attr.cap.max_recv_sge = 4;
     res->qp = ibv_create_qp(res->pd, &qp_init_attr);
     if (!res->qp) {
         fprintf(stderr, "failed to create QP\n");
