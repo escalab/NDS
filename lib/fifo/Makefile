@@ -13,7 +13,7 @@ default: $(TARGET)
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -c $<
+	$(CC) $(CFLAGS) -c $^
 	ar rcs $@ *.o
 	rm *.o
 
