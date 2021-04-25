@@ -10,7 +10,7 @@ src_path = pathlib.Path(sys.argv[1])
 p = pathlib.Path('/home/yuchialiu/workspace/TensorStore')
 ls = list(p.glob('**/*/{}'.format(sys.argv[1].split('/')[-1])))
 print('source file is {}'.format(src_path.resolve()))
-result = True
+delta = 0
 
 if len(ls) <= 1:
     print("doesn't get any files to compare")
@@ -21,9 +21,9 @@ for path in ls:
     # print(str(path.resolve()))
     if filecmp.cmp(str(src_path.resolve()), str(path.resolve())) is not True:
         print('{} is not the same'.format(path))
-        result = result and False
+        delta += 1
 
-if result is not True:
-    print('someone is not the same')
-else:
+if delta is 0:
     print('all clear')
+else:
+    print('{} files are not the same'.format(delta))
