@@ -1,10 +1,14 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <cuda_runtime.h>
+#include "cublas_v2.h"
+
 extern "C" {
     #include "rdma.h"
     #include "timing.h"
     #include "fifo.h"
 }
-
-#include "cublasGEMM.h"
 
 #define MAX_THREAD 1024
 
