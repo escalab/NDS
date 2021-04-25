@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS=-O3 -Wall
 
-TARGET = libtensorstore.so
+TARGET = libtensorstore.a
 SRC=tensorstore.c
 TEST=test_transform
 ifeq ($(debug),1)
@@ -13,7 +13,9 @@ default: $(TARGET)
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -fPIC --shared -o $@ $< 
+	$(CC) $(CFLAGS) -c $^ $(LDFLAGS)
+	ar rcs $@ *.o
+	rm *.o
 
 $(TEST): $(TEST).c
 
