@@ -19,11 +19,11 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 4096UL
+#define SUB_M 8192UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
-// #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-#define IO_QUEUE_SZ 2UL
+#define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
+// #define IO_QUEUE_SZ 2UL
 
 #define NITERS 4UL
 
@@ -33,13 +33,15 @@ struct fetch_conf {
     struct resources *res;
     uint64_t m, sub_m;
     char *hugepage_addr;
-    struct fifo *sending_queue;
-    struct fifo *complete_queue;
+    struct fifo *request_queue;
+    struct fifo *io_queue;
     struct timing_info *aggregated_fetch_timing;
 };
 
 struct request_conf {
     struct resources *res;
+    struct fifo *complete_queue;
+    struct fifo *request_queue;
     uint64_t id;
     uint64_t m, sub_m;
 };
@@ -47,37 +49,6 @@ struct request_conf {
 struct fifo_entry {
     struct response *resp;
 };
-
-// int cudaMemcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length, struct timing_info *fetch_timing) {
-//     struct response *res = NULL;
-
-//     timing_info_push_start(fetch_timing);
-//     res = sock_read_offset(conf->res->sock);
-//     if (res == NULL) {
-//         fprintf(stderr, "sync error before RDMA ops\n");
-//         return 1;
-//     }
-
-//     // if (res->id == 0) {
-//     //     printf("fetching row [%lu:%lu]\n", res->x, res->y);
-//     // } else {
-//     //     printf("fetching col [%lu:%lu]\n", res->x, res->y);
-//     // }
-//     // printf("offset: %lu\n", res->offset);
-
-//     timing_info_push_end(fetch_timing);
-
-//     timing_info_push_start(conf->copy_in_timing);
-//     cudaMemcpy(dst, src + res->offset, length, cudaMemcpyHostToDevice);
-//     timing_info_push_end(conf->copy_in_timing);
-
-//     free(res);
-//     if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
-//         fprintf(stderr, "sync error before RDMA ops\n");
-//         return 1;
-//     }
-//     return 0;
-// }
 
 void *fetch_thread(void *args) {
     struct fetch_conf *conf = (struct fetch_conf *) args;
@@ -87,8 +58,7 @@ void *fetch_thread(void *args) {
     for (iter = 0; iter < NITERS; iter++) {
         for (i = 0; i < conf->m / conf->sub_m; i++) {
             for (j = 0; j < conf->m / conf->sub_m; j++) {
-                entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
-                timing_info_push_start(conf->aggregated_fetch_timing);
+                entry = (struct fifo_entry *) fifo_pop(conf->request_queue);
                 entry->resp = sock_read_offset(conf->res->sock);
                 if (entry->resp == NULL) {
                     fprintf(stderr, "sync error before RDMA ops\n");
@@ -99,8 +69,7 @@ void *fetch_thread(void *args) {
                     fprintf(stderr, "sync error before RDMA ops\n");
                     return NULL;
                 }
-                timing_info_push_end(conf->aggregated_fetch_timing);
-                fifo_push(conf->sending_queue, entry);
+                fifo_push(conf->io_queue, entry);
             }
         }
     }
@@ -109,14 +78,17 @@ void *fetch_thread(void *args) {
 
 void *request_thread(void *args) {
     struct request_conf *conf = (struct request_conf *) args;
+    struct fifo_entry *entry = NULL;
     uint64_t iter, i, j;
     for (iter = 0; iter < NITERS; iter++) {
         for (i = 0; i < conf->m / conf->sub_m; i++) {
             for (j = 0; j < conf->m / conf->sub_m; j++) {
+                entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
                 sock_write_request(conf->res->req_sock, conf->id, j, i, SUB_M, 1, 0);
                 sock_read_data(conf->res->req_sock);
+                fifo_push(conf->request_queue, entry);
             }
-        }
+        }    
     }
     // send a signal to tell storage backend the iteration is done.
     sock_write_request(conf->res->req_sock, -1, 0, 0, SUB_M, 1, 0);
@@ -126,9 +98,9 @@ void *request_thread(void *args) {
 
 int nds_aggregated_read(struct resources *res, uint64_t id) {
     size_t iter, i, j;
-    double *d_addr;
 
-    struct fifo *sending_queue;
+    struct fifo *request_queue;
+    struct fifo *io_queue;
     struct fifo *complete_queue; 
     struct fifo_entry *entries = (struct fifo_entry *) calloc(IO_QUEUE_SZ, sizeof(struct fifo_entry));
     struct fifo_entry *entry = NULL;  
@@ -158,12 +130,16 @@ int nds_aggregated_read(struct resources *res, uint64_t id) {
         return -1;
     }
 
-    cudaMalloc(&d_addr, SUB_M * SUB_M * sizeof(double));
-
     // it causes problem if size == 1
-    sending_queue = fifo_new(IO_QUEUE_SZ * 2);
-	if (sending_queue == NULL) {
-        printf("cannot create sending_queue\n");
+    request_queue = fifo_new(IO_QUEUE_SZ * 2);
+	if (request_queue == NULL) {
+        printf("cannot create request_queue\n");
+        return -1;
+    }
+
+    io_queue = fifo_new(IO_QUEUE_SZ * 2);
+	if (io_queue == NULL) {
+        printf("cannot create io_queue\n");
         return -1;
     }
     
@@ -171,23 +147,25 @@ int nds_aggregated_read(struct resources *res, uint64_t id) {
 	if (complete_queue == NULL) {
         printf("cannot create complete_queue\n");
         return -1;
-    }
-    
+    }    
+
     for (i = 0; i < IO_QUEUE_SZ; i++) {
         fifo_push(complete_queue, entries + i);
     }
 
+    // create thread here
     r_conf.res = res;
     r_conf.id = id;
     r_conf.m = M;
     r_conf.sub_m = SUB_M;
+    r_conf.request_queue = request_queue;
+    r_conf.complete_queue = complete_queue;
 
-    // create thread here
     f_conf.res = res;
     f_conf.m = M;
     f_conf.sub_m = SUB_M;
-    f_conf.sending_queue = sending_queue;
-    f_conf.complete_queue = complete_queue;
+    f_conf.io_queue = io_queue;
+    f_conf.request_queue = request_queue;
     f_conf.aggregated_fetch_timing = aggregated_fetch_timing;
 
     gettimeofday(&h_start, NULL);
@@ -198,7 +176,7 @@ int nds_aggregated_read(struct resources *res, uint64_t id) {
     for (iter = 0; iter < NITERS; iter++) {
         for (i = 0; i < (M / SUB_M); i++) {
             for (j = 0; j < (M / SUB_M); j++) {
-                entry = (struct fifo_entry *) fifo_pop(sending_queue);
+                entry = (struct fifo_entry *) fifo_pop(io_queue);
 
                 // timing_info_push_start(copy_in_timing);
                 // cudaMemcpy(d_addr, res->buf + entry->resp->offset, SUB_M * SUB_M * sizeof(double), cudaMemcpyHostToDevice);
@@ -223,9 +201,9 @@ int nds_aggregated_read(struct resources *res, uint64_t id) {
 
     // Memory clean-up and CUBLAS shutdown
     free(entries);
-    cudaFree(d_addr);
-    fifo_free(complete_queue);
-    fifo_free(sending_queue);
+    fifo_free(request_queue);
+    fifo_free(io_queue);
+    fifo_free(complete_queue);    
     return 0;
 }
 
