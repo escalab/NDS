@@ -5,13 +5,13 @@ extern "C" {
 }
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
-#define M 65536UL
-#define SUB_M 4096UL
+#define M 32768UL
+#define SUB_M 8192UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 #define NITERS 4UL
 #define ROW_WRITE 4
 #define COL_WRITE 5
-#define CURRENT_OP ROW_WRITE
+#define CURRENT_OP COL_WRITE
 
 #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
 // #define IO_QUEUE_SZ 16UL
@@ -208,15 +208,15 @@ int nds_stripe_write(struct resources *res, int matrix_id, uint64_t m, uint64_t 
             fifo_push(request_queue, entry);
         }
     }
-    gettimeofday(&h_end, NULL);
-    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
 
     // fifo_close(request_queue);
     pthread_join(r_thread_id, NULL); 
     sock_write_request(res->req_sock, -1, 0, 1, SUB_M, CURRENT_OP, 0);
     sock_read_data(res->req_sock);
     pthread_join(f_thread_id, NULL); 
-    
+    gettimeofday(&h_end, NULL);
+    duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
+
     printf("Pagerank duration: %f ms\n", (float) duration / 1000);    
     printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
     printf("Row write time: %f ms\n", (float) timing_info_duration(write_timing) / 1000);
