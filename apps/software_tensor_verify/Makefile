@@ -4,7 +4,7 @@ LD_FLAGS = -I/usr/local/cuda/include -L/usr/local/cuda/lib64/ -lcublas_static -l
 LD_FLAGS += -I../../lib/gemm -L../../lib/gemm -lcublasGEMM 
 LD_FLAGS += -L../../lib/timing/ -I../../lib/timing/ -ltiming
 
-TARGET=ttv
+TARGET=verify
 SRC=verify.cu fifo.c rdma.c setup_rdma.c sock.c
 
 ifeq ($(debug),1)
