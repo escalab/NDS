@@ -1,6 +1,5 @@
 extern "C" {
     #include "rdma.h"
-    #include "timing.h"
     #include "fifo.h"
 }
 
@@ -10,7 +9,7 @@ extern "C" {
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 
-#define M 1024UL
+#define M 1536UL
 #define N M
 #define K M
 
@@ -24,7 +23,7 @@ extern "C" {
 #define AGGREGATED_SZ (SUB_M * SUB_M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
-#define IO_QUEUE_SZ 1UL
+#define IO_QUEUE_SZ 2UL
 
 #define NITERS 4UL
 
@@ -35,26 +34,25 @@ struct fetch_conf {
     uint64_t m, sub_m;
     double *sub_B;
     char *hugepage_addr;
-    struct fifo *sending_queue;
-    struct fifo *complete_queue;
-    struct timing_info *fetch_timing;
-    struct timing_info *copy_in_timing;
+    struct fifo *request_queue;
+    struct fifo *io_queue;
 };
 
 struct request_conf {
     struct resources *res;
+    struct fifo *complete_queue;
+    struct fifo *request_queue;
     uint64_t id;
-    uint64_t sub_m;
+    uint64_t m, sub_m;
 };
 
 struct fifo_entry {
     double *sub_B;
 };
 
-int memcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length, struct timing_info *fetch_timing) {
+int memcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const size_t length) {
     struct response *res = NULL;
 
-    timing_info_push_start(fetch_timing);
     res = sock_read_offset(conf->res->sock);
     if (res == NULL) {
         fprintf(stderr, "sync error before RDMA ops\n");
@@ -66,12 +64,8 @@ int memcpyFromMmap(struct fetch_conf *conf, char *dst, const char *src, const si
     // } else {
     //     printf("fetching col [%lu:%lu]\n", res->x, res->y);
     // }
-    timing_info_push_end(fetch_timing);
-
-    timing_info_push_start(conf->copy_in_timing);
 
     memcpy(dst, src + res->offset, length);
-    timing_info_push_end(conf->copy_in_timing);
 
     free(res);
     if (sock_write_data(conf->res->sock)) { /* just send a dummy char back and forth */
@@ -85,21 +79,21 @@ void *fetch_thread(void *args) {
     struct fetch_conf *conf = (struct fetch_conf *) args;
     uint64_t n, m, k;
     uint64_t dsize = SUB_M * SUB_M * SUB_M;
-    double *ptr_a;
+    double *ptr;
     struct fifo_entry *entry = NULL;
     uint64_t count = 0;
 
     for (n = 0; n < N / SUB_M; n++) {
         for (m = 0; m < M / SUB_M; m++) {
             for (k = 0; k < K / SUB_M; k++) {
-                entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
-                ptr_a = conf->sub_B + dsize * (count % IO_QUEUE_SZ);
+                entry = (struct fifo_entry *) fifo_pop(conf->request_queue);
+                ptr = conf->sub_B + dsize * (count % IO_QUEUE_SZ);
 
-                memcpyFromMmap(conf, (char *) ptr_a, (char *) conf->hugepage_addr, dsize * sizeof(double), conf->fetch_timing);
+                memcpyFromMmap(conf, (char *) ptr, (char *) conf->res->buf, dsize * sizeof(double));
                 count++;
 
-                entry->sub_B = ptr_a;
-                fifo_push(conf->sending_queue, entry);
+                entry->sub_B = ptr;
+                fifo_push(conf->io_queue, entry);
             }
         }
     }
@@ -109,11 +103,15 @@ void *fetch_thread(void *args) {
 void *request_thread(void *args) {
     struct request_conf *conf = (struct request_conf *) args;
     uint64_t n, m, k;
+    struct fifo_entry *entry = NULL;
     for (n = 0; n < N / SUB_M; n++) {
         for (m = 0; m < M / SUB_M; m++) {
             for (k = 0; k < K / SUB_M; k++) {
-                sock_write_request(conf->res->req_sock, conf->id, n, m, k, 1, 0);
+                entry = (struct fifo_entry *) fifo_pop(conf->complete_queue);
+                // TODO: need to add one more param
+                sock_write_request(conf->res->req_sock, conf->id, n, m, SUB_M, 4, k);
                 sock_read_data(conf->res->req_sock);
+                fifo_push(conf->request_queue, entry);
             }
         }
     }
@@ -162,16 +160,11 @@ int nds_tensor_verify(struct resources *res, uint64_t id, uint64_t size, uint64_
     
     size_t total_iteration;
 
-    struct fifo *sending_queue;
+    struct fifo *request_queue;
+    struct fifo *io_queue;
     struct fifo *complete_queue; 
     struct fifo_entry *entries = (struct fifo_entry *) calloc(IO_QUEUE_SZ, sizeof(struct fifo_entry));
     struct fifo_entry *entry = NULL;
-
-    struct timing_info *queue_timing;
-    struct timing_info *fetch_timing;
-    struct timing_info *copy_in_timing;
-    struct timing_info *ttv_timing;
-    struct timing_info *copy_out_timing;    
     
     pthread_t f_thread_id; 
     struct fetch_conf f_conf;
@@ -184,40 +177,17 @@ int nds_tensor_verify(struct resources *res, uint64_t id, uint64_t size, uint64_
 
     // initialization
     total_iteration = (M / SUB_M) * (M / SUB_M) * (M / SUB_M);
-    queue_timing = timing_info_new(total_iteration);
-    if (queue_timing == NULL) {
-        printf("cannot create queue_timing\n");
-        return -1;
-    }
-
-    fetch_timing = timing_info_new(total_iteration);
-    if (fetch_timing == NULL) {
-        printf("cannot create fetch_timing\n");
-        return -1;
-    }
-
-    copy_in_timing = timing_info_new(total_iteration * 2);
-    if (copy_in_timing == NULL) {
-        printf("cannot create copy_in_timing\n");
-        return -1;
-    }
-
-    ttv_timing = timing_info_new(total_iteration);
-    if (ttv_timing == NULL) {
-        printf("cannot create ttv_timing\n");
-        return -1;
-    }
-
-    copy_out_timing = timing_info_new(total_iteration);
-    if (copy_out_timing == NULL) {
-        printf("cannot create copy_out_timing\n");
-        return -1;
-    }
 
     // it causes problem if size == 1
-    sending_queue = fifo_new(IO_QUEUE_SZ * 2);
-	if (sending_queue == NULL) {
-        printf("cannot create sending_queue\n");
+    request_queue = fifo_new(IO_QUEUE_SZ * 2);
+	if (request_queue == NULL) {
+        printf("cannot create request_queue\n");
+        return -1;
+    }
+
+    io_queue = fifo_new(IO_QUEUE_SZ * 2);
+	if (io_queue == NULL) {
+        printf("cannot create io_queue\n");
         return -1;
     }
     
@@ -231,35 +201,26 @@ int nds_tensor_verify(struct resources *res, uint64_t id, uint64_t size, uint64_
         fifo_push(complete_queue, entries + i);
     }
 
-    sub_B = (double *) malloc(SUB_M * SUB_M * SUB_M * sizeof(double));
+    sub_B = (double *) malloc(SUB_M * SUB_M * SUB_M * sizeof(double) * IO_QUEUE_SZ);
     verify_sub_B = (double *) malloc(SUB_M * SUB_M * SUB_M * sizeof(double));
-
-    // M * N has to be < 1024
-    dim3 grid((SUB_M+32)/32, (SUB_M+32)/32);
-    dim3 block(32, 32);
 
     r_conf.res = res;
     r_conf.id = id;
+    r_conf.m = M;
     r_conf.sub_m = SUB_M;
-    pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
+    r_conf.request_queue = request_queue;
+    r_conf.complete_queue = complete_queue;
 
     // create thread here
     f_conf.res = res;
-    f_conf.m = size;
-    f_conf.sub_m = sub_size;
+    f_conf.m = M;
+    f_conf.sub_m = SUB_M;
+    f_conf.io_queue = io_queue;
+    f_conf.request_queue = request_queue;
     f_conf.sub_B = sub_B;
-    f_conf.hugepage_addr = res->buf;
-    f_conf.sending_queue = sending_queue;
-    f_conf.complete_queue = complete_queue;
-    f_conf.fetch_timing = fetch_timing;
-    f_conf.copy_in_timing = copy_in_timing;
 
-    timing_info_set_starting_time(queue_timing);
-    timing_info_set_starting_time(fetch_timing);
-    timing_info_set_starting_time(copy_in_timing);
-    timing_info_set_starting_time(ttv_timing);
-    timing_info_set_starting_time(copy_out_timing);
-	pthread_create(&f_thread_id, NULL, fetch_thread, &f_conf); 
+    pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
+    pthread_create(&f_thread_id, NULL, fetch_thread, &f_conf);  
 
     gettimeofday(&h_start, NULL);
     // blockGEMM
@@ -267,84 +228,29 @@ int nds_tensor_verify(struct resources *res, uint64_t id, uint64_t size, uint64_
         for (m = 0; m < M; m+=SUB_M) { 
             for (k = 0; k < K; k+=SUB_M) {
                 // memcpy?
-
-                timing_info_push_start(queue_timing);
-                entry = (struct fifo_entry *) fifo_pop(sending_queue);
-                timing_info_push_end(queue_timing);
-                timing_info_push_start(ttv_timing);
+                entry = (struct fifo_entry *) fifo_pop(io_queue);
                 reassemble_block_tensor_from_seq(verify_matrix, verify_sub_B, M, SUB_M, n, m, k);
                 error += verify(verify_sub_B, entry->sub_B, SUB_M * SUB_M * SUB_M);
                 fifo_push(complete_queue, entry);
-                timing_info_push_end(ttv_timing);
             }
-            // assign C
-            timing_info_push_start(copy_out_timing);
-            timing_info_push_end(copy_out_timing);
         }
     }
+
+    pthread_join(r_thread_id, NULL); 
+    pthread_join(f_thread_id, NULL); 
             
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-    printf("TTV duration: %f ms\n", (float) duration / 1000);    
-
-    printf("Row fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
-    printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
-    printf("sending_queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);
-    printf("Kernel time: %f ms\n", (float) timing_info_duration(ttv_timing) / 1000);
-    printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
-    
+    printf("Verify duration: %f ms\n", (float) duration / 1000);    
+    printf("error: %lu\n", error);
     if (error == 0) {
-        printf("test passed!\n");
+        printf("TEST PASSED!\n");
     }
-    pthread_join(r_thread_id, NULL); 
-    pthread_join(f_thread_id, NULL); 
-
-    struct timestamps *tss = NULL;
-    FILE *fptr;
-    tss = timing_info_get_timestamps(fetch_timing);
-    fptr = fopen("row_fetch_ts.bin", "wb");
-    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
-    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
-    fclose(fptr);
-    timing_info_free_timestamps(tss);    
-    timing_info_free(fetch_timing);
-
-    tss = timing_info_get_timestamps(copy_in_timing);
-    fptr = fopen("copy_in_ts.bin", "wb");
-    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
-    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
-    fclose(fptr);
-    timing_info_free_timestamps(tss);    
-    timing_info_free(copy_in_timing);
-    
-    tss = timing_info_get_timestamps(queue_timing);
-    fptr = fopen("queue_ts.bin", "wb");
-    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
-    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
-    fclose(fptr);
-    timing_info_free_timestamps(tss);    
-    timing_info_free(queue_timing);
-
-    tss = timing_info_get_timestamps(ttv_timing);
-    fptr = fopen("gemm_ts.bin", "wb");
-    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
-    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
-    fclose(fptr);
-    timing_info_free_timestamps(tss);    
-    timing_info_free(ttv_timing);
-
-    tss = timing_info_get_timestamps(copy_out_timing);
-    fptr = fopen("copy_out_ts.bin", "wb");
-    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
-    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
-    fclose(fptr);
-    timing_info_free_timestamps(tss);    
-    timing_info_free(copy_out_timing);
     
     free(sub_B);
     free(verify_sub_B);
-    fifo_free(sending_queue);
-    fifo_free(complete_queue);
+    fifo_free(io_queue);
+    fifo_free(request_queue);
     free(entries);
     return 0;
 }
@@ -419,6 +325,18 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    verify_fd = open(argv[2], O_RDONLY);
+    if (verify_fd < 0) {
+        perror("open");
+        exit(1);
+    }
+
+    verify_matrix = (double *) mmap(0, M * N * K * sizeof(double), PROT_READ, MAP_PRIVATE, verify_fd, 0);
+    if (verify_matrix==MAP_FAILED) {
+        perror("mmap");
+        exit(1);
+    }
+
     res.buf = hugepage_addr;
     memset(hugepage_addr, 0, BUF_SIZE);
 
@@ -447,18 +365,6 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    verify_fd = open(argv[2], O_RDONLY);
-    if (verify_fd < 0) {
-        perror("open");
-        exit(1);
-    }
-
-    verify_matrix = (double *) mmap(0, M * N * K * sizeof(double), PROT_READ, MAP_PRIVATE, verify_fd, 0);
-    if (verify_matrix==MAP_FAILED) {
-        perror("mmap");
-        exit(1);
-    }
-
     printf("calculating the result of pagerank\n");
     rc = nds_tensor_verify(&res, matrix_id, M, SUB_M, verify_matrix);
     
@@ -466,7 +372,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "failed to destroy resources\n");
         exit(1);
     }
-    
     close(res.req_sock);
     munmap(hugepage_addr, BUF_SIZE);
     close(hugepage_fd);
