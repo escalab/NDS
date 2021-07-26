@@ -294,7 +294,7 @@ int main(int argc, char *argv[]) {
     struct resources res;
     struct config_t config = {
         "mlx4_0",  /* dev_name */
-        NULL,  /* server_name */
+        "192.168.1.10",  /* server_name */
         19875, /* tcp_port */
         1,     /* ib_port */
         0     /* gid_idx */
