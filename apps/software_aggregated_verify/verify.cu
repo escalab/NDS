@@ -17,7 +17,7 @@ extern "C" {
 
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
-#define M 65536UL
+#define M 32768UL
 #define SUB_M 16384UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
@@ -241,7 +241,7 @@ int main(int argc, char *argv[]) {
     struct resources res;
     struct config_t config = {
         "mlx4_0",  /* dev_name */
-        NULL,  /* server_name */
+        "127.0.0.1",  /* server_name */
         19875, /* tcp_port */
         1,     /* ib_port */
         0     /* gid_idx */
