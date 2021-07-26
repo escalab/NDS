@@ -32,6 +32,7 @@ int sock_connect(const char *servername, int port) {
     int sockfd = -1;
     int listenfd = 0;
     int tmp;
+    int optval = 1;
     unsigned long start_time_msec;
     unsigned long cur_time_msec;
     struct timeval cur_time;
@@ -70,6 +71,7 @@ int sock_connect(const char *servername, int port) {
                 }
             } else {
                 /* Server mode. Set up listening socket an accept a connection */
+                setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
                 listenfd = sockfd;
                 sockfd = -1;
                 if (bind(listenfd, iterator->ai_addr, iterator->ai_addrlen))
