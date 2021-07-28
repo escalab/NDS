@@ -10,11 +10,11 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 16384UL
+#define SUB_M 4096UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
-#define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-// #define IO_QUEUE_SZ 1UL
+// #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
+#define IO_QUEUE_SZ 2UL
 
 void print_config(struct config_t config);
 
@@ -94,8 +94,6 @@ void *request_thread(void *args) {
             }
         }
     }
-    sock_write_request(conf->res->req_sock, -1, j, i, SUB_M, 1, 0);
-    sock_read_data(conf->res->req_sock);
     return NULL;
 }
 
@@ -308,10 +306,15 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
             }
         }
     }
+    pthread_join(r_thread_id, NULL); 
+    pthread_join(f_thread_id, NULL); 
+    sock_write_request(res->req_sock, -1, j, i, SUB_M, 1, 0);
+    sock_read_data(res->req_sock);
     gettimeofday(&h_end, NULL);
+
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("Ending simulation\n");
-    printf("GEMM duration: %f ms\n", (float) duration / 1000);    
+    printf("Hotspot duration: %f ms\n", (float) duration / 1000);    
 
     printf("Fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
     printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
@@ -320,9 +323,6 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
     printf("convolution row time: %f ms\n", (float) timing_info_duration(convolution_row_timing) / 1000);
     printf("convolution col time time: %f ms\n", (float) timing_info_duration(convolution_col_timing) / 1000);
     printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
-
-    pthread_join(r_thread_id, NULL); 
-    pthread_join(f_thread_id, NULL); 
 
     struct timestamps *tss = NULL;
     FILE *fptr;
@@ -437,7 +437,7 @@ int main(int argc, char *argv[]) {
     struct resources res;
     struct config_t config = {
         "mlx4_0",  /* dev_name */
-        NULL,  /* server_name */
+        "127.0.0.1",  /* server_name */
         19875, /* tcp_port */
         1,     /* ib_port */
         0     /* gid_idx */
