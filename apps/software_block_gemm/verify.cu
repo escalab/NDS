@@ -1,3 +1,12 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <cuda_runtime.h>
+#include "cublas_v2.h"
+
+// timing
+#include <sys/time.h>
+
 extern "C" {
     #include "rdma.h"
     #include "timing.h"
@@ -11,11 +20,11 @@ extern "C" {
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
 #define SUB_M 16384UL
-#define SUBSUB_M 1024UL
+#define SUBSUB_M 8192UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
-#define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
-// #define IO_QUEUE_SZ 1UL
+// #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
+#define IO_QUEUE_SZ 1UL
 
 void print_config(struct config_t config);
 
@@ -146,9 +155,6 @@ void *request_thread(void *args) {
             }
         }
     }
-
-    sock_write_request(conf->res->req_sock, -1, k, i, SUB_M, 1, 0);
-    sock_read_data(conf->res->req_sock);
     return NULL;
 }
 
@@ -322,6 +328,12 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t id, uint64_
             timing_info_push_end(copy_out_timing);
         }
     }
+    pthread_join(r_thread_id, NULL); 
+    pthread_join(f_thread_id, NULL); 
+
+    sock_write_request(res->req_sock, -1, 0, 0, SUB_M, 1, 0);
+    sock_read_data(res->req_sock);
+
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     printf("GEMM duration: %f ms\n", (float) duration / 1000);    
@@ -334,8 +346,7 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t id, uint64_
     printf("GEMM time: %f ms\n", (float) timing_info_duration(gemm_timing) / 1000);
     printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
 
-    pthread_join(r_thread_id, NULL); 
-    pthread_join(f_thread_id, NULL); 
+
 
     struct timestamps *tss = NULL;
     FILE *fptr;
@@ -446,7 +457,7 @@ int main(int argc, char *argv[]) {
     struct resources res;
     struct config_t config = {
         "mlx4_0",  /* dev_name */
-        NULL,  /* server_name */
+        "127.0.0.1",  /* server_name */
         19875, /* tcp_port */
         1,     /* ib_port */
         0     /* gid_idx */
