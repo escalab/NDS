@@ -23,8 +23,8 @@ extern "C" {
 #define SUB_M 4096UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
-#define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-// #define IO_QUEUE_SZ 1UL
+// #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
+#define IO_QUEUE_SZ 2UL
 
 #define NITERS 16UL // pre-check from another implementation
 
@@ -472,7 +472,7 @@ int main(int argc, char *argv[]) {
     struct resources res;
     struct config_t config = {
         "mlx4_0",  /* dev_name */
-        NULL,  /* server_name */
+        "127.0.0.1",  /* server_name */
         19875, /* tcp_port */
         1,     /* ib_port */
         0     /* gid_idx */
