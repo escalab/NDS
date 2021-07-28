@@ -22,11 +22,11 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 1024UL
+#define SUB_M 2048UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-#define IO_QUEUE_SZ 4UL
+#define IO_QUEUE_SZ 2UL
 
 void print_config(struct config_t config);
 
@@ -694,7 +694,7 @@ int main(int argc, char *argv[]) {
     struct resources res;
     struct config_t config = {
         "mlx4_0",  /* dev_name */
-        NULL,  /* server_name */
+        "127.0.0.1",  /* server_name */
         19875, /* tcp_port */
         1,     /* ib_port */
         0     /* gid_idx */
