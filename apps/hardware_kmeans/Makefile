@@ -4,9 +4,11 @@ CFLAGS = -O3 -Wno-deprecated-gpu-targets
 # LD_FLAGS += -I../../lib/gemm -L../../lib/gemm -lcublasGEMM 
 LD_FLAGS = -lcuda -lcublas -lcudart -libverbs -lpthread -ldl
 LD_FLAGS += -L../../lib/timing/ -I../../lib/timing/ -ltiming
+LD_FLAGS += -L../../lib/fifo/ -I../../lib/fifo/ -lfifo
+LD_FLAGS += -L../../lib/rdma/ -I../../lib/rdma/ -lrdma
 
 TARGET=kmeans
-SRC=verify.cu fifo.c rdma.c setup_rdma.c sock.c
+SRC=verify.cu
 
 ifeq ($(debug),1)
 	LD_FLAGS += -g -DDEBUG

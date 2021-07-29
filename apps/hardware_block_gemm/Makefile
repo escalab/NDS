@@ -5,7 +5,7 @@ LD_FLAGS += -L../../lib/timing/ -I../../lib/timing/ -ltiming
 LD_FLAGS += -L../../lib/fifo/ -I../../lib/fifo/ -lfifo
 LD_FLAGS += -L../../lib/rdma/ -I../../lib/rdma/ -lrdma
 
-TARGET=sst_gemm
+TARGET=block_gemm
 SRC=verify.cu
 
 ifeq ($(debug),1)

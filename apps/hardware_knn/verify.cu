@@ -22,11 +22,11 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 1024UL
+#define SUB_M 2048UL
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-#define IO_QUEUE_SZ 4UL
+#define IO_QUEUE_SZ 2UL
 
 void print_config(struct config_t config);
 
@@ -238,10 +238,6 @@ void *request_thread(void *args) {
         sock_write_request(conf->res->req_sock, conf->id, st, st+1, conf->sub_m, 3, 0);
         sock_read_data(conf->res->req_sock);
     }
-
-    // send a signal to tell storage backend the iteration is done.
-    sock_write_request(conf->res->req_sock, -1, st, st+1, SUB_M, 0, 0);
-    sock_read_data(conf->res->req_sock);
     return NULL;
 }
 
@@ -520,6 +516,13 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         timing_info_push_end(kernel_1_timing);
     }
 
+    // send a signal to tell storage backend the iteration is done.
+    sock_write_request(res->req_sock, -1, 0, 1, SUB_M, 0, 0);
+    sock_read_data(res->req_sock);
+
+    pthread_join(r_thread_id, NULL); 
+    // pthread_join(f_thread_id, NULL); 
+
     // Sort each column for the top-k results
     timing_info_push_start(kernel_2_timing);
     modified_insertion_sort<<<(query_nb+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(dist_dev, dist_pitch, index_dev, index_pitch, query_nb, ref_nb, k);
@@ -569,9 +572,6 @@ int nds_knn(struct resources *res, uint64_t id, uint64_t ref_nb, uint64_t subref
         return -1; 
     }
     timing_info_push_end(copy_out_timing);
-
-    pthread_join(r_thread_id, NULL); 
-    // pthread_join(f_thread_id, NULL); 
 
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
@@ -694,7 +694,7 @@ int main(int argc, char *argv[]) {
     struct resources res;
     struct config_t config = {
         "mlx4_0",  /* dev_name */
-        NULL,  /* server_name */
+        "192.168.1.10",  /* server_name */
         19875, /* tcp_port */
         1,     /* ib_port */
         0     /* gid_idx */

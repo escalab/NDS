@@ -7,7 +7,6 @@ extern "C" {
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <cublas_v2.h>
 #include <cuda_runtime.h>
 
 #define M 2048UL
@@ -129,14 +128,11 @@ void *request_thread(void *args) {
     for (n = 0; n < N / SUB_M; n++) {
         for (m = 0; m < M / SUB_M; m++) {
             for (k = 0; k < K / SUB_M; k++) {
-                sock_write_request(conf->res->req_sock, conf->id, n, m, k, 1, 0);
+                sock_write_request(conf->res->req_sock, conf->id, n, m, SUB_M, 4, k);
                 sock_read_data(conf->res->req_sock);
             }
         }
     }
-
-    sock_write_request(conf->res->req_sock, -1, n, m, k, 1, 0);
-    sock_read_data(conf->res->req_sock);
     return NULL;
 }
 
@@ -311,10 +307,15 @@ int nds_tc(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size,
             timing_info_push_end(copy_out_timing);
         }
     }
-            
+    pthread_join(r_thread_id, NULL); 
+    pthread_join(f_thread_id, NULL); 
+
+    sock_write_request(res->req_sock, -1, 0, 0, SUB_M, 4, 0);
+    sock_read_data(res->req_sock);
+
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-    printf("TTV duration: %f ms\n", (float) duration / 1000);    
+    printf("TC duration: %f ms\n", (float) duration / 1000);    
 
     printf("Row fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
     printf("Copy in B time: %f ms\n", (float) timing_info_duration(copy_in_B_timing) / 1000);
@@ -322,9 +323,7 @@ int nds_tc(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size,
     printf("sending_queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);
     printf("Kernel time: %f ms\n", (float) timing_info_duration(kernel_timing) / 1000);
     printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
-    
-    pthread_join(r_thread_id, NULL); 
-    pthread_join(f_thread_id, NULL); 
+
 
     struct timestamps *tss = NULL;
     FILE *fptr;
@@ -437,7 +436,7 @@ int main(int argc, char *argv[]) {
     struct resources res;
     struct config_t config = {
         "mlx4_0",  /* dev_name */
-        NULL,  /* server_name */
+        "192.168.1.10",  /* server_name */
         19875, /* tcp_port */
         1,     /* ib_port */
         0     /* gid_idx */
