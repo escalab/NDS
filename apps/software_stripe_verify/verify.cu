@@ -17,8 +17,8 @@ extern "C" {
 
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
-#define M 32768UL
-#define SUB_M 8192UL
+#define M 65536UL
+#define SUB_M 4096UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)

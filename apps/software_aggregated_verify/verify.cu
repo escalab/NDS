@@ -17,12 +17,12 @@ extern "C" {
 
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
-#define M 32768UL
+#define M 65536UL
 #define SUB_M 16384UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
-#define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-// #define IO_QUEUE_SZ 2UL
+// #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
+#define IO_QUEUE_SZ 2UL
 
 void print_config(struct config_t config);
 
@@ -99,6 +99,17 @@ uint64_t aggregated_verify(double *arr, double *answer, uint64_t x, uint64_t y, 
         // arr_ptr += sub_m;
         // answer_ptr += m;
         for (j = 0; j < sub_m; j++) {
+            if (isnan(arr[i * sub_m + j])) {
+                printf("(%lu, %lu) is NaN\n", i, j);
+                rc = 1; 
+                return rc;
+            }
+
+            if (isinf(arr[i * sub_m + j])) {
+                printf("(%lu, %lu) is inf\n", i, j);
+                rc = 1; 
+                return rc;
+            }
             if (arr[i * sub_m + j] != answer_ptr[i * m + j]) {
                 error++;
             }
