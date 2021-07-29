@@ -240,8 +240,8 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
     r_conf.id = id;
     r_conf.m = M;
     r_conf.sub_m = SUB_M;
-    f_conf.total_iterations = total_iterations;
-    f_conf.num_iterations = num_iterations;
+    r_conf.total_iterations = total_iterations;
+    r_conf.num_iterations = num_iterations;
     pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
 
     // create thread here

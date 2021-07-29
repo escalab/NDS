@@ -14,7 +14,7 @@ extern "C" {
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-#define IO_QUEUE_SZ 2UL
+#define IO_QUEUE_SZ 1UL
 
 void print_config(struct config_t config);
 
@@ -124,8 +124,7 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
     struct timing_info *copy_in_timing;
     struct timing_info *memset_timing;
     struct timing_info *queue_timing;
-    struct timing_info *convolution_row_timing;
-    struct timing_info *convolution_col_timing;
+    struct timing_info *kernel_timing;
     struct timing_info *copy_out_timing;    
     
     pthread_t f_thread_id; 
@@ -165,15 +164,9 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
         return -1;
     }
 
-    convolution_row_timing = timing_info_new(dsize);
-    if (convolution_row_timing == NULL) {
-        printf("cannot create convolution_row_timing\n");
-        return -1;
-    }
-
-    convolution_col_timing = timing_info_new(dsize);
-    if (convolution_col_timing == NULL) {
-        printf("cannot create convolution_col_timing\n");
+    kernel_timing = timing_info_new(dsize);
+    if (kernel_timing == NULL) {
+        printf("cannot create kernel_timing\n");
         return -1;
     }
 
@@ -240,9 +233,8 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
     r_conf.id = id;
     r_conf.m = M;
     r_conf.sub_m = SUB_M;
-    f_conf.total_iterations = total_iterations;
-    f_conf.num_iterations = num_iterations;
-    pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
+    r_conf.total_iterations = total_iterations;
+    r_conf.num_iterations = num_iterations;
 
     // create thread here
     f_conf.res = res;
@@ -259,13 +251,13 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
     timing_info_set_starting_time(memset_timing);
     timing_info_set_starting_time(fetch_timing);
     timing_info_set_starting_time(copy_in_timing);
-    timing_info_set_starting_time(convolution_row_timing);
-    timing_info_set_starting_time(convolution_col_timing);
+    timing_info_set_starting_time(kernel_timing);
     timing_info_set_starting_time(copy_out_timing);
-	pthread_create(&f_thread_id, NULL, fetch_thread, &f_conf); 
 
     printf("Start computing the transient temperature\n");
     gettimeofday(&h_start, NULL);
+    pthread_create(&r_thread_id, NULL, request_thread, &r_conf); 
+	pthread_create(&f_thread_id, NULL, fetch_thread, &f_conf); 
     
     for (t = 0; t < total_iterations; t+=num_iterations) {
         for (i = 0; i < m / sub_m; i++) {
@@ -286,7 +278,7 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
                 fifo_push(complete_queue, entry);
                 timing_info_push_end(copy_in_timing);
 
-                timing_info_push_start(convolution_row_timing);
+                timing_info_push_start(kernel_timing);
                 calculate_temp<<<dimGrid, dimBlock>>>(MIN(num_iterations, total_iterations-t), MatrixPower, MatrixTempIn, MatrixTempOut,
                     grid_rows, grid_cols, borderCols, borderRows, Cap, Rx, Ry, Rz, step, time_elapsed);
                 err = cudaGetLastError();
@@ -294,7 +286,7 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
                     printf("Kernel Error: %s\n", cudaGetErrorString(err));
                 }
             
-                timing_info_push_end(convolution_row_timing);
+                timing_info_push_end(kernel_timing);
         
                 timing_info_push_start(copy_out_timing);
                 cudaMemcpy(MatrixOut, MatrixTempOut, dsize * sizeof(double), cudaMemcpyDeviceToHost);
@@ -320,8 +312,7 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
     printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
     printf("memset time: %f ms\n", (float) timing_info_duration(memset_timing) / 1000);
     printf("queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);
-    printf("convolution row time: %f ms\n", (float) timing_info_duration(convolution_row_timing) / 1000);
-    printf("convolution col time time: %f ms\n", (float) timing_info_duration(convolution_col_timing) / 1000);
+    printf("kernel time: %f ms\n", (float) timing_info_duration(kernel_timing) / 1000);
     printf("copy out time: %f ms\n", (float) timing_info_duration(copy_out_timing) / 1000);
 
     struct timestamps *tss = NULL;
@@ -358,21 +349,13 @@ __host__ int spdk_nds_hotspot(struct resources *res, uint64_t id, uint64_t m, ui
     timing_info_free_timestamps(tss);    
     timing_info_free(queue_timing);
 
-    tss = timing_info_get_timestamps(convolution_row_timing);
+    tss = timing_info_get_timestamps(kernel_timing);
     fptr = fopen("convolution_row_ts.bin", "wb");
     fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
     fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
     fclose(fptr);
     timing_info_free_timestamps(tss);    
-    timing_info_free(convolution_row_timing);
-
-    tss = timing_info_get_timestamps(convolution_col_timing);
-    fptr = fopen("convolution_col_ts.bin", "wb");
-    fwrite(&tss->count, sizeof(uint64_t), 1, fptr);
-    fwrite(tss->timestamps, sizeof(uint64_t), tss->count * 2, fptr);
-    fclose(fptr);
-    timing_info_free_timestamps(tss);    
-    timing_info_free(convolution_col_timing);
+    timing_info_free(kernel_timing);
 
     tss = timing_info_get_timestamps(copy_out_timing);
     fptr = fopen("copy_out_ts.bin", "wb");
