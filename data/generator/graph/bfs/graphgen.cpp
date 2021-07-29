@@ -76,7 +76,7 @@ int main( int argc, char ** argv )
 
 	// Initialize random number generators
 	// C RNG for numbers of edges and weights
-	srand( time( NULL ) );
+	srand( 5 );
 	// TR1 RNG for choosing edge destinations
 	LINEAR_CONGRUENTIAL_ENGINE<ulong, 48271, 0, ULONG_MAX> gen( time( NULL ) );
 	UNIFORM_INT_DISTRIBUTION<ulong> randNode( 0, numNodes - 1 );
