@@ -26,7 +26,7 @@ extern "C" {
 #define AGGREGATED_SZ (M * SUB_M * 8UL)
 
 // #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ)
-#define IO_QUEUE_SZ 1UL
+#define IO_QUEUE_SZ 2UL
 
 #define msg(format, ...) do { fprintf(stderr, format, ##__VA_ARGS__); } while (0)
 #define err(format, ...) do { fprintf(stderr, format, ##__VA_ARGS__); exit(1); } while (0)
@@ -749,7 +749,7 @@ int main(int argc, char *argv[]) {
     struct resources res;
     struct config_t config = {
         "mlx4_0",  /* dev_name */
-        NULL,  /* server_name */
+        "127.0.0.1",  /* server_name */
         19875, /* tcp_port */
         1,     /* ib_port */
         0     /* gid_idx */
