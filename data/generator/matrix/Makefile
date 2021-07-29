@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS=-O3 -Wall
 LD_FLAGS = -I../lib/tensorstore -L../lib/tensorstore -ltensorstore
-TARGET=datagen_long datagen_double datagen_double_seq datagen_seq2tensor datagen_tensor2seq
+TARGET=datagen_long datagen_double datagen_double_seq datagen_seq2tensor datagen_tensor2seq datagen_tensor2colstripe
 
 ifeq ($(debug),1)
 	CFLAGS += -g -DDEBUG
