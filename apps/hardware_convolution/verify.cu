@@ -322,7 +322,7 @@ int spdk_nds_blockSgemm_half_pthread(struct resources *res, uint64_t id, uint64_
 
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-    printf("End-to-end duration:%f ms\n", (float) duration / 1000);    
+    printf("End-to-end duration: %f ms\n", (float) duration / 1000);    
 
     printf("Fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
     printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
