@@ -356,7 +356,7 @@ int nds_bfs(struct resources *res, uint64_t id, uint64_t num_of_vertices, uint64
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     
-    printf("BFS End-to-end duration: %f ms\n", (float) duration / 1000);    
+    printf("End-to-end duration: %f ms\n", (float) duration / 1000);    
 	printf("Kernel Executed %lu times, Row fetched %lu times\n", iter, fetch_iter);
 
     printf("Row fetch time: %f ms\n", (float) timing_info_duration(row_fetch_timing) / 1000);

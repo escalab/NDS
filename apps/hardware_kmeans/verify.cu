@@ -616,7 +616,7 @@ double** nds_kmeans_block(struct resources *res, uint64_t id, uint64_t numCoords
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
     
-    printf("Kmeans End-to-end duration: %f ms\n", (float) duration / 1000);    
+    printf("End-to-end duration: %f ms\n", (float) duration / 1000);    
     printf("Col fetch time: %f ms\n", (float) timing_info_duration(col_fetch_timing) / 1000);
     printf("Copy in time: %f ms\n", (float) timing_info_duration(copy_in_timing) / 1000);
     printf("sending_queue waiting time: %f ms\n", (float) timing_info_duration(queue_timing) / 1000);

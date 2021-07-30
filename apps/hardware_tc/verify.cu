@@ -26,8 +26,8 @@ extern "C" {
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define AGGREGATED_SZ (SUB_M * SUB_M * SUB_M * 8UL)
 
-#define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
-// #define IO_QUEUE_SZ 1UL
+// #define IO_QUEUE_SZ (HUGEPAGE_SZ / AGGREGATED_SZ / 2UL)
+#define IO_QUEUE_SZ 2UL
 
 void print_config(struct config_t config);
 
@@ -315,7 +315,7 @@ int nds_tc(struct resources *res, uint64_t id, uint64_t size, uint64_t sub_size,
 
     gettimeofday(&h_end, NULL);
     duration = ((h_end.tv_sec - h_start.tv_sec) * 1000000) + (h_end.tv_usec - h_start.tv_usec);
-    printf("TC duration: %f ms\n", (float) duration / 1000);    
+    printf("End-to-end duration: %f ms\n", (float) duration / 1000);    
 
     printf("Row fetch time: %f ms\n", (float) timing_info_duration(fetch_timing) / 1000);
     printf("Copy in B time: %f ms\n", (float) timing_info_duration(copy_in_B_timing) / 1000);
