@@ -1,12 +1,3 @@
-/*
- * daemonize.c
- * This example daemonizes a process, writes a few log messages,
- * sleeps 20 seconds and terminates afterwards.
- * This is an answer to the stackoverflow question:
- * https://stackoverflow.com/questions/17954432/creating-a-daemon-in-linux/17955149#17955149
- * Fork this code: https://github.com/pasce/daemon-skeleton-linux-c
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -30,7 +21,7 @@ int main(int argc, char** argv)
     struct request *req_from_host;
 
     if (argc < 2) {
-        printf("usage: %s [software=0|hardware=1|terminate=2]\n", argv[0]);
+        printf("usage: %s [baseline=0|software_nds=1|hardware_nds=2|terminate=-1]\n", argv[0]);
         exit(1);
     }
 
