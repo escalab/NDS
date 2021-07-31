@@ -66,4 +66,10 @@ cd ~/workspace/TensorStore/apps/software_tc
 make clean && make
 ./tc 4 2048 512 19871 >> ${seq_log}
 
+# close software NDS server
+echo "close software NDS server"
+cd ~/workspace/TensorStore/apps/software_close_device
+make clean && make
+./close 19871
+
 cd ~/workspace/TensorStore/scripts/
