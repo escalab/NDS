@@ -5,7 +5,7 @@ from scipy import stats
 
 pandas.options.display.float_format = "{:.3f}".format
 
-configuration_list = ['software_seq', 'software_nds', 'hardware_nds']
+configuration_list = ['baseline', 'software_nds', 'hardware_nds']
 app_list = ['block-GEMM', 'k-means', 'k-nn', 'bfs', 'bellman-ford', 'pagerank', 'conv2d', 'hotspot', 'ttv', 'tc']
 
 num_configurations = len(configuration_list)

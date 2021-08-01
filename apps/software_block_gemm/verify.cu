@@ -19,7 +19,7 @@ extern "C" {
 
 #define HUGEPAGE_SZ (4UL * 1024UL * 1024UL * 1024UL)
 #define M 65536UL
-#define SUB_M 16384UL
+#define SUB_M 8192UL
 #define SUBSUB_M 8192UL
 #define AGGREGATED_SZ (SUB_M * SUB_M * 8UL)
 
