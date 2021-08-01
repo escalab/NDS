@@ -1,4 +1,4 @@
-PROJECTS ?= lib/Makefile test/Makefile data/Makefile cuda_samples/Makefile
+PROJECTS ?= lib/Makefile apps/Makefile
 FILTER_OUT := 
 PROJECTS := $(filter-out $(FILTER_OUT),$(PROJECTS))
 
