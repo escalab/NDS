@@ -3,10 +3,24 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <sys/mman.h>
 
-#include "tensorstore.h"
+void seq2tensor(double *seq_matrix, double *tensor_matrix, size_t m, size_t n, size_t sub_m, size_t sub_n) {
+    size_t i, j, ii;
+    size_t cross_row = m, cross_col = sub_m;
+    double *src, *dst;
+    for (i = 0; i < m; i += sub_m) {
+        for (j = 0; j < n; j += sub_n) {
+            dst = tensor_matrix + i * cross_row + j * cross_col;
+            src = seq_matrix + i * n + j;
+            for (ii = 0; ii < sub_m; ii++) {
+                memcpy((dst + ii * sub_n), (src + ii * n), sizeof(double) * sub_n);
+            }
+        }
+    }  
+}
 
 int main(int argc, char** argv) {
     int64_t n, sub_n;
