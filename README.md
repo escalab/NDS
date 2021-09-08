@@ -1,6 +1,8 @@
-# TensorStore
+# NDS
 
-NDS Applications 
+This is the source code used for NDS: N-Dimensional Storage
+
+[![DOI](https://zenodo.org/badge/404414517.svg)](https://zenodo.org/badge/latestdoi/404414517)
 
 ## Install
 ```
